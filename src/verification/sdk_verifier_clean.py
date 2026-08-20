@@ -97,7 +97,7 @@ class SDKVerifier:
         
         # Default controller type for verification
         self.default_controller_type = "1756-L83E"
-        self.default_major_revision = 36
+        self.default_major_revision = 35
         
     async def verify_ladder_logic(self, ladder_logic: str, context: Optional[Dict[str, Any]] = None) -> VerificationResult:
         """

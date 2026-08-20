@@ -302,7 +302,7 @@ class MCPIntegratedAssistant:
             project_name = project_spec.get('name', 'WarehouseAutomation')
             controller_type = project_spec.get('controller_type', '1756-L83E')
             save_path = project_spec.get('save_path', f"{project_name}.ACD")
-            major_revision = project_spec.get('major_revision', 36)
+            major_revision = project_spec.get('major_revision', 35)
             
             # Generate ladder logic if specification provided
             ladder_logic_xml = ""
@@ -591,7 +591,7 @@ class MCPIntegratedAssistant:
         
         # This is a simplified L5X structure - would need full implementation
         l5x_template = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="36.00">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00">
     <Controller Use="Context" Name="{project_name}">
         <RedundancyInfo Enabled="false" KeepTestEditsOnSwitchOver="false" IOMemoryPadPercentage="90" DataTablePadPercentage="50"/>
         <Security Code="0" ChangesToDetect="16#ffff_ffff_ffff_ffff"/>

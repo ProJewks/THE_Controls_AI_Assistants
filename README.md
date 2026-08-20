@@ -36,7 +36,7 @@ python src/mcp_server/studio5000_mcp_server.py --test
 
 ### **Prerequisites** ⚠️ CRITICAL
 - **Python 3.12** (NOT 3.11 or earlier - the SDK will not work!)
-- **Studio 5000 Logix Designer v36 or later** installed on your machine
+- **Studio 5000 Logix Designer v35 or later** installed on your machine
 - **Windows Operating System** (Studio 5000 SDK is Windows-only)
 
 ### **Installation Steps**
@@ -90,7 +90,7 @@ python src/mcp_server/studio5000_mcp_server.py --test
 - **Direct Studio 5000 Compatibility**: .ACD files open directly in Studio 5000 without conversion
 - **✅ Empty Project Creation**: Clean ACD templates ready for manual development (RELIABLE)
 - **⚠️ Complete Project Creation**: Experimental - SDK partial import for MainProgram/MainTask (UNRELIABLE)
-- **Version Control**: Supports different Studio 5000 major revisions (v36 default)
+- **Version Control**: Supports different Studio 5000 major revisions (v35 default)
 - **💡 Recommended**: Use empty ACD creation + manual L5X import workflow
 
 ### **🔍 Vector-Powered Semantic Search**
@@ -134,7 +134,7 @@ python src/mcp_server/studio5000_mcp_server.py --test
 
 **System Requirements:**
 - **Python 3.12.x** (Download from [python.org](https://www.python.org/downloads/))
-- **Studio 5000 Logix Designer v36 or later** installed
+- **Studio 5000 Logix Designer v35 or later** installed
 - **Windows Operating System** (Studio 5000 SDK is Windows-only)
 - **Administrator privileges** may be required for initial setup
 
@@ -230,7 +230,7 @@ The server will automatically detect your Studio 5000 installation paths. Skip t
    - Open System Properties → Environment Variables
    - Add these User or System variables:
      ```
-     STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000
+     STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000
      STUDIO5000_SDK_PATH=C:\Users\Public\Documents\Studio 5000\Logix Designer SDK\python
      PYTHON312_PATH=C:\Users\YourUsername\AppData\Local\Programs\Python\Python312\python.exe
      ```
@@ -238,7 +238,7 @@ The server will automatically detect your Studio 5000 installation paths. Skip t
    **Option B: Create `.env` file** (in project root):
    
    ```bash
-   STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000
+   STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000
    STUDIO5000_SDK_PATH=C:\Users\Public\Documents\Studio 5000\Logix Designer SDK\python
    PYTHON312_PATH=C:\Users\YourUsername\AppData\Local\Programs\Python\Python312\python.exe
    ```
@@ -247,11 +247,11 @@ The server will automatically detect your Studio 5000 installation paths. Skip t
    
    **Documentation Path**: Look for this file in your Studio 5000 installation:
    ```
-   <Studio5000_Install>\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000\17691.htm
+   <Studio5000_Install>\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000\17691.htm
    ```
    Common locations:
-   - `C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000`
-   - `C:\Program Files\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000`
+   - `C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000`
+   - `C:\Program Files\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000`
 
    **SDK Path**: Look for the SDK Python folder:
    ```
@@ -264,7 +264,7 @@ The server will automatically detect your Studio 5000 installation paths. Skip t
    python src/mcp_server/studio5000_mcp_server.py --test
    
    # Or test with explicit path
-   python src/mcp_server/studio5000_mcp_server.py --doc-root "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000" --test
+   python src/mcp_server/studio5000_mcp_server.py --doc-root "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000" --test
    ```
 
    **Successful output should show**:
@@ -292,7 +292,7 @@ Add to your Claude Desktop configuration file (typically found in `%APPDATA%\Cla
       ],
       "cwd": "C:\\Users\\YourUsername\\Studio5000_MCP_Server",
       "env": {
-        "STUDIO5000_DOC_PATH": "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v36\\Bin\\Help\\ENU\\rs5000",
+        "STUDIO5000_DOC_PATH": "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000",
         "STUDIO5000_SDK_PATH": "C:\\Users\\Public\\Documents\\Studio 5000\\Logix Designer SDK\\python"
       }
     }
@@ -309,7 +309,7 @@ Add to your Claude Desktop configuration file (typically found in `%APPDATA%\Cla
       "args": [
         "C:\\Users\\YourUsername\\Studio5000_MCP_Server\\src\\mcp_server\\studio5000_mcp_server.py",
         "--doc-root",
-        "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v36\\Bin\\Help\\ENU\\rs5000"
+        "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000"
       ],
       "cwd": "C:\\Users\\YourUsername\\Studio5000_MCP_Server"
     }
@@ -705,17 +705,17 @@ python --version
 1. **Open File Explorer** and search for: `17691.htm`
 2. **Look in these common locations**:
    ```
-   C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000\17691.htm
-   C:\Program Files\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000\17691.htm
+   C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000\17691.htm
+   C:\Program Files\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000\17691.htm
    C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v37\Bin\Help\ENU\rs5000\17691.htm
    ```
 3. **Set the correct path** (everything except the filename):
    ```bash
    # Via environment variable
-   set STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000
+   set STUDIO5000_DOC_PATH=C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000
    
    # Or via command line
-   python src/mcp_server/studio5000_mcp_server.py --doc-root "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000" --test
+   python src/mcp_server/studio5000_mcp_server.py --doc-root "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000" --test
    ```
 
 #### 3. **SDK Not Available**
@@ -832,7 +832,7 @@ pip install -r requirements.txt
 - **Verify network drive access** if Studio 5000 is on network share
 
 #### 9. **Studio 5000 Version Compatibility**
-**Problem**: Different Studio 5000 version than v36.
+**Problem**: Different Studio 5000 version than v35.
 
 **Solutions**:
 - **Update documentation path** to match your version (v37, v38, etc.)
@@ -850,7 +850,7 @@ python --version
 python src/mcp_server/studio5000_mcp_server.py --test
 
 # Test 3: Documentation path
-dir "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000\17691.htm"
+dir "C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000\17691.htm"
 
 # Test 4: SDK availability (after installing wheel file)
 python -c "import logix_designer_sdk; print('SDK Available')"

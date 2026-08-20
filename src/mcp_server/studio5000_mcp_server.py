@@ -1539,7 +1539,7 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                         'properties': {
                             'name': {'type': 'string', 'description': 'Project name'},
                             'controller_type': {'type': 'string', 'description': 'Controller type (e.g., 1756-L83E)'},
-                            'major_revision': {'type': 'integer', 'description': 'Studio 5000 major revision (default 36)'},
+                            'major_revision': {'type': 'integer', 'description': 'Studio 5000 major revision (default 35)'},
                             'save_path': {'type': 'string', 'description': 'File path to save .ACD file'}
                         }
                     }
@@ -1794,7 +1794,7 @@ async def main():
     # Get default documentation path from environment variable or use fallback
     default_doc_path = os.environ.get(
         'STUDIO5000_DOC_PATH', 
-        r'C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v36\Bin\Help\ENU\rs5000'
+        r'C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000'
     )
     
     parser.add_argument('--doc-root', 

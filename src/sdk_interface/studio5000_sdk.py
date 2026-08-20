@@ -51,17 +51,17 @@ class Studio5000SDKInterface:
             # Extract project parameters
             project_name = project_spec.get('name', 'AI_Generated_Project')
             controller_type = project_spec.get('controller_type', '1756-L83E')
-            major_revision = project_spec.get('major_revision', 36)
+            major_revision = project_spec.get('major_revision', 35)
             save_path = project_spec.get('save_path', f'{project_name}.ACD')
-            
+
             # Ensure .ACD extension
             if not save_path.endswith('.ACD'):
                 save_path += '.ACD'
-            
+
             # Create full path
             if not os.path.isabs(save_path):
                 save_path = os.path.join(os.getcwd(), save_path)
-            
+
             print(f"Creating EMPTY .ACD project: {save_path}", file=sys.stderr)
             print(f"Controller: {controller_type}, Revision: {major_revision}", file=sys.stderr)
             
@@ -115,7 +115,7 @@ class Studio5000SDKInterface:
             # Extract project parameters
             project_name = project_spec.get('name', 'AI_Generated_Project')
             controller_type = project_spec.get('controller_type', '1756-L83E')
-            major_revision = project_spec.get('major_revision', 36)
+            major_revision = project_spec.get('major_revision', 35)
             save_path = project_spec.get('save_path', f'{project_name}.ACD')
             ladder_logic = project_spec.get('ladder_logic', '')
             
@@ -250,7 +250,7 @@ class Studio5000SDKInterface:
         
         # Generate L5X XML with MainProgram and MainTask
         l5x_template = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="36.00" TargetName="{project_name}" TargetType="Controller" TargetRevision="1.0" TargetLastEdited="2024-01-01T00:00:00.000Z" ContainsContext="true" Owner="AI Assistant" ExportDate="Tue Jan 01 00:00:00 2024" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="{project_name}" TargetType="Controller" TargetRevision="1.0" TargetLastEdited="2024-01-01T00:00:00.000Z" ContainsContext="true" Owner="AI Assistant" ExportDate="Tue Jan 01 00:00:00 2024" ExportOptions="References NoRawData L5KData DecoratedData Context Dependencies ForceProtectedEncoding AllProjDocTrans">
 
     <Controller Use="Context">
         <!-- MainTask Definition -->
@@ -311,7 +311,7 @@ class Studio5000SDKInterface:
         
         # Generate complete L5X with Programs and Tasks sections
         l5x_content = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="36.00">
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00">
     <Controller Use="Context" Name="{project_name}">
         <Programs Use="Context">
             <Program Use="Context" Name="MainProgram" TestEdits="false" MainRoutineName="MainRoutine" Disabled="false" UseAsFolder="false">

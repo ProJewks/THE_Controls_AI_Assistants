@@ -5,7 +5,7 @@
       "args": [
         "studio5000_mcp_server.py",
         "--doc-root",
-        "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v36\\Bin\\Help\\ENU\\rs5000"
+        "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000"
       ],
       "cwd": "C:\\Users\\kontr\\Studio5000_MCP_Server"
     }
