@@ -90,14 +90,17 @@ edit it by hand, run `setup.py` instead.
    # Must show Python 3.12.x - if not, install Python 3.12 from python.org
    ```
 
-2. **Clone and Install**:
+2. **Clone and run setup**:
    ```bash
-   git clone <repository-url>
-   cd Studio5000_MCP_Server
-   pip install -r requirements.txt
+   git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
+   cd THE_Studio5000_AI_Assistant_V35
+   python setup.py
    ```
+   This installs dependencies, the SDK wheel, and generates your config in one step —
+   see the [TL;DR](#-tldr---one-command-setup) above. Steps 2-3 below are the manual,
+   step-by-step equivalent if you'd rather do it yourself.
 
-3. **Install Studio 5000 SDK** (for .ACD files):
+3. **Install Studio 5000 SDK** (for .ACD files) — only needed if you skip `setup.py`:
    ```bash
    pip install "C:\Users\Public\Documents\Studio 5000\Logix Designer SDK\python\logix_designer_sdk-*-py3-none-any.whl"
    ```
@@ -322,11 +325,17 @@ The server will automatically detect your Studio 5000 installation paths. Skip t
 
 ## Configuration for Claude Desktop
 
-To use this MCP server with Claude Desktop, add the following to your Claude configuration:
+**If you ran `python setup.py`**, this is already done — it wrote your real, correct paths
+(whatever folder you cloned into, whatever Windows username you're on) into
+`claude_desktop_config.snippet.json`, or merged them straight into Claude Desktop's config if
+you passed `--write-claude-desktop`. Nothing below to fill in by hand.
+
+**Doing it manually?** Add the following to your Claude Desktop configuration file (typically
+found at `%APPDATA%\Claude\config.json`). Replace `YourUsername` and the folder name with
+wherever you actually cloned this repo — the folder is only called
+`THE_Studio5000_AI_Assistant_V35` if you cloned it with the default name:
 
 ### Windows Configuration
-
-Add to your Claude Desktop configuration file (typically found in `%APPDATA%\Claude\config.json`):
 
 **Option A: Using Environment Variables (Recommended)**
 ```json
@@ -335,9 +344,9 @@ Add to your Claude Desktop configuration file (typically found in `%APPDATA%\Cla
     "studio5000-ai-assistant": {
       "command": "python",
       "args": [
-        "C:\\Users\\YourUsername\\Studio5000_MCP_Server\\src\\mcp_server\\studio5000_mcp_server.py"
+        "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35\\src\\mcp_server\\studio5000_mcp_server.py"
       ],
-      "cwd": "C:\\Users\\YourUsername\\Studio5000_MCP_Server",
+      "cwd": "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35",
       "env": {
         "STUDIO5000_DOC_PATH": "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000",
         "STUDIO5000_SDK_PATH": "C:\\Users\\Public\\Documents\\Studio 5000\\Logix Designer SDK\\python"
@@ -354,11 +363,11 @@ Add to your Claude Desktop configuration file (typically found in `%APPDATA%\Cla
     "studio5000-ai-assistant": {
       "command": "python",
       "args": [
-        "C:\\Users\\YourUsername\\Studio5000_MCP_Server\\src\\mcp_server\\studio5000_mcp_server.py",
+        "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35\\src\\mcp_server\\studio5000_mcp_server.py",
         "--doc-root",
         "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000"
       ],
-      "cwd": "C:\\Users\\YourUsername\\Studio5000_MCP_Server"
+      "cwd": "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35"
     }
   }
 }
@@ -959,7 +968,8 @@ The MCP server consists of four main components:
 ## 📁 Project Structure
 
 ```
-Studio5000_MCP_Server/
+THE_Studio5000_AI_Assistant_V35/        # (folder name is whatever you clone it as)
+├── setup.py                             # One-command installer — run this first
 ├── src/                                # Main source code
 │   ├── mcp_server/
 │   │   └── studio5000_mcp_server.py    # Main MCP server with AI features

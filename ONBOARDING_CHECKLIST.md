@@ -5,11 +5,11 @@
 ### **Day 1: Basic Setup**
 - [ ] **Read** [TEAM_USAGE_GUIDE.md](TEAM_USAGE_GUIDE.md) for complete workflow understanding
 - [ ] **Install** Python 3.12 from [python.org](https://python.org/downloads/) 
-- [ ] **Clone** the Studio5000_MCP_Server repository
-- [ ] **Install** dependencies: `pip install -r requirements.txt`
-- [ ] **Install** Studio 5000 SDK wheel file (critical for .ACD creation)
-- [ ] **Test** installation: `python src/mcp_server/studio5000_mcp_server.py --test`
-- [ ] **Configure** Claude Desktop with MCP server (see README.md)
+- [ ] **Clone** this repository
+- [ ] **Run** `python setup.py` (installs dependencies, the SDK wheel, detects your Studio 5000
+      version, and generates your Claude Desktop/Claude Code config for you — see README.md)
+- [ ] **Confirm** the setup script's self-test passed
+- [ ] **Restart** Claude Desktop (or reopen the repo in Claude Code) so it picks up the new MCP server
 
 ### **Day 2: Practice Project**
 - [ ] **Create** practice project folder following team structure

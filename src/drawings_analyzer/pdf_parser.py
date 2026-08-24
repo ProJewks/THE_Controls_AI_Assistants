@@ -10,6 +10,7 @@ Optimized for production-scale processing following existing architecture patter
 
 import os
 import re
+import sys
 import time
 import logging
 import signal
@@ -895,6 +896,10 @@ def test_parser_on_pdf(pdf_path: str, max_pages: int = 5):
         return False
 
 if __name__ == "__main__":
-    # Test with the actual PDF
-    pdf_path = r"C:\Users\kontr\OneDrive\Desktop\MCM_06_Real\2429_AMAZON-MTN6-MCM01_V10 (1).pdf"
-    test_parser_on_pdf(pdf_path, max_pages=3)
+    # Manual smoke test: pass the path to a PDF of technical drawings to try
+    if len(sys.argv) < 2:
+        print("Usage: python pdf_parser.py <path-to-pdf> [max_pages]")
+        sys.exit(1)
+    pdf_path = sys.argv[1]
+    max_pages = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    test_parser_on_pdf(pdf_path, max_pages=max_pages)

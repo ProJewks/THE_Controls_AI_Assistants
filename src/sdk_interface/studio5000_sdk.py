@@ -32,11 +32,10 @@ class Studio5000SDKInterface:
     
     def __init__(self):
         self.sdk_available = SDK_AVAILABLE
-        # Get Python 3.12 path from environment or use default
-        self.python312_path = os.environ.get(
-            'PYTHON312_PATH',
-            r"C:\Users\kontr\AppData\Local\Programs\Python\Python312\python.exe"
-        )
+        # Get Python 3.12 path from environment, falling back to whichever
+        # interpreter is currently running this process (set PYTHON312_PATH
+        # if you need to point at a different Python 3.12 install)
+        self.python312_path = os.environ.get('PYTHON312_PATH', sys.executable)
     
     async def create_empty_acd_project(self, project_spec: Dict[str, Any]) -> Dict[str, Any]:
         """Create an EMPTY .ACD project file using Studio 5000 SDK - NO PROGRAMS ADDED"""
