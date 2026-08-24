@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 # Import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -93,7 +93,10 @@ class Instruction:
 
 class Studio5000Parser:
     """Parses Studio 5000 HTML documentation"""
-    
+
+    # Cache lives next to this file so it's found regardless of the server's cwd
+    INDEX_CACHE_FILE = Path(__file__).parent / "instruction_index_cache.json"
+
     def __init__(self, doc_root: str):
         self.doc_root = Path(doc_root)
         self.instructions = {}
@@ -250,22 +253,72 @@ class Studio5000Parser:
         
         return None
     
+    def _compute_doc_fingerprint(self, html_files: List[Path]) -> Dict[str, Any]:
+        """Cheap fingerprint of the doc set (file count + newest mtime) to detect changes"""
+        newest_mtime = max((f.stat().st_mtime for f in html_files), default=0)
+        return {
+            "doc_root": str(self.doc_root),
+            "file_count": len(html_files),
+            "newest_mtime": newest_mtime,
+        }
+
+    def _load_cached_index(self, fingerprint: Dict[str, Any]) -> Optional[Dict[str, Instruction]]:
+        """Load the instruction index from disk if the cache matches the current doc set"""
+        if not self.INDEX_CACHE_FILE.exists():
+            return None
+
+        try:
+            with open(self.INDEX_CACHE_FILE, 'r', encoding='utf-8') as f:
+                cached = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        if cached.get("fingerprint") != fingerprint:
+            return None
+
+        try:
+            self.categories = cached["categories"]
+            return {
+                name: Instruction(**fields)
+                for name, fields in cached["instructions"].items()
+            }
+        except (KeyError, TypeError):
+            return None
+
+    def _save_cached_index(self, fingerprint: Dict[str, Any], instructions: Dict[str, Instruction]) -> None:
+        """Persist the parsed instruction index so future startups can skip re-parsing"""
+        try:
+            with open(self.INDEX_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "fingerprint": fingerprint,
+                    "categories": self.categories,
+                    "instructions": {name: asdict(inst) for name, inst in instructions.items()},
+                }, f)
+        except OSError as e:
+            print(f"Warning: could not write instruction index cache: {e}", file=sys.stderr)
+
     def build_instruction_index(self) -> Dict[str, Instruction]:
-        """Build a comprehensive index of all instructions"""
-        instructions = {}
-        
-        # Parse categories first
-        self.parse_main_index()
-        
+        """Build a comprehensive index of all instructions, reusing a cached index when the docs haven't changed"""
         # Find all HTML files that might be instructions
         html_files = list(self.doc_root.glob("*.htm"))
-        
+        fingerprint = self._compute_doc_fingerprint(html_files)
+
+        cached_instructions = self._load_cached_index(fingerprint)
+        if cached_instructions is not None:
+            self.instructions = cached_instructions
+            return cached_instructions
+
+        # Parse categories first
+        self.parse_main_index()
+
+        instructions = {}
         for html_file in html_files:
             instruction = self.parse_instruction_file(html_file.name)
             if instruction and instruction.name:
                 instructions[instruction.name.upper()] = instruction
-        
+
         self.instructions = instructions
+        self._save_cached_index(fingerprint, instructions)
         return instructions
 
 class Studio5000MCPServer:
