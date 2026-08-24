@@ -1,27 +1,70 @@
 # NOTICE:
-Please note that this repo is strictly a prototype that will probably not be maintained. You are welcome to work on this if you like, just make a fork and do your own thing.
+This is a **v35 edition** fork of the Studio 5000 AI Assistant, maintained independently. It defaults to Studio 5000 Logix Designer **v35**, but supports any installed version through the setup script's `--version` flag (see [Choosing your Studio 5000 version](#-choosing-your-studio-5000-version) below). Credit to the original project this was based on: [rivie13/studio5000-AI-Assistant](https://github.com/rivie13/studio5000-AI-Assistant) (v36 by default). This repo is a prototype — you're welcome to fork it and make it your own.
 
 # 🤖 Studio 5000 AI-Powered PLC Programming Assistant
 
 This revolutionary MCP (Model Context Protocol) server transforms PLC programming by providing AI-powered code generation, L5X routine creation, real .ACD file generation, and seamless Studio 5000 integration. Convert natural language specifications directly into working ladder logic and complete Studio 5000 projects!
 
-## ⚡ **TL;DR - For Impatient Teammates**
+## ⚡ **TL;DR - One Command Setup**
 ```bash
 # 1. Get Python 3.12 (NOT 3.11!) from python.org
 python --version  # Must show 3.12.x
 
-# 2. Clone and install
-git clone <repository-url>
-cd Studio5000_MCP_Server
-pip install -r requirements.txt
+# 2. Clone the repo
+git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
+cd THE_Studio5000_AI_Assistant_V35
 
-# 3. Install SDK (CRITICAL for .ACD files!)
-pip install "C:\Users\Public\Documents\Studio 5000\Logix Designer SDK\python\logix_designer_sdk-*-py3-none-any.whl"
-
-# 4. Test it works
-python src/mcp_server/studio5000_mcp_server.py --test
+# 3. Run the setup script — installs everything and writes your config for you
+python setup.py
 ```
-**That's it!** ✅ Skip to [Claude Desktop setup](#configuration-for-claude-desktop) if tests pass.
+`setup.py` detects your installed Studio 5000 version (defaulting to v35), installs
+`requirements.txt`, installs the Logix Designer SDK wheel if it finds one, generates
+ready-to-use MCP config files with the correct paths for **your** machine, and runs the
+built-in self-test. See [Choosing your Studio 5000 version](#-choosing-your-studio-5000-version)
+if you're not on v35, and [What setup.py generates](#-what-setuppy-generates) for what to do
+with the files it creates.
+
+**That's it!** ✅ Skip to [Configuration for Claude Desktop](#configuration-for-claude-desktop) if
+you want to wire it up by hand instead, or just point Claude Desktop/Claude Code at the files
+`setup.py` already generated.
+
+## 🔀 **Choosing your Studio 5000 version**
+
+This fork defaults to **v35**, but you're not locked into it. `setup.py` scans your machine for
+every installed Logix Designer version and lets you pick:
+
+```bash
+# Auto-detect and prompt interactively (default: v35 if present)
+python setup.py
+
+# Force a specific version, e.g. the upstream project's v36
+python setup.py --version 36
+
+# Non-interactive, accept every default (CI / scripted installs)
+python setup.py --yes
+
+# Skip prompts but still write straight into Claude Desktop's config
+python setup.py --version 37 --write-claude-desktop --yes
+```
+
+If a version isn't auto-detected, the script falls back to the standard Rockwell install path
+(`...\Logix Designer\ENU\v<N>\Bin\Help\ENU\rs5000`) for whatever number you give it — override
+with `--doc-root` on the server itself (see [Step 5](#step-5-configure-environment-variables-advanced-users-only))
+if your install lives somewhere non-standard.
+
+## 📦 **What setup.py generates**
+
+Every file below is machine-specific (absolute paths, your Python interpreter) and
+git-ignored — regenerate them any time by re-running `python setup.py`:
+
+| File | Used by |
+|---|---|
+| `mcp_config.local.json` | Generic/Cursor-style MCP config |
+| `claude_desktop_config.snippet.json` | Paste under `"mcpServers"` in Claude Desktop's config (or let `--write-claude-desktop` do it for you) |
+| `.mcp.json` | Claude Code project-scope MCP config — picked up automatically when you open this repo in Claude Code |
+
+`mcp_config.json` (no `.local`) stays in the repo as a plain **template** for reference — don't
+edit it by hand, run `setup.py` instead.
 
 ## 📚 **New Team Member Resources**
 
@@ -152,9 +195,13 @@ python src/mcp_server/studio5000_mcp_server.py --test
 #### Step 2: Get the Project
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
-   cd Studio5000_MCP_Server
+   git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
+   cd THE_Studio5000_AI_Assistant_V35
    ```
+2. **Prefer the one-command path?** Run `python setup.py` now and skip to
+   [Step 4](#step-4-test-your-installation-) — it does Steps 3 and 3.5 for you, including
+   picking your Studio 5000 version. The manual steps below are for anyone who wants full
+   control over each piece.
 
 #### Step 3: Install Dependencies (CRITICAL!)
 1. **Install all required packages**:
