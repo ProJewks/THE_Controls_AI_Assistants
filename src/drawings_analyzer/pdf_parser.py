@@ -22,13 +22,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .pdf_chunk import PDFChunk, PDFChunkType, PDFLocation
 
-# PyMuPDF import with error handling
-try:
-    import fitz  # PyMuPDF
-    PYMUPDF_AVAILABLE = True
-except ImportError:
-    PYMUPDF_AVAILABLE = False
-    logging.warning("PyMuPDF not available - PDF parsing disabled")
+# PyMuPDF import moved to lazy load (see _ensure_fitz) - importing it eagerly at
+# module load time adds startup latency and can push the MCP server past the
+# client's connection timeout, even when PDF parsing is never used.
+fitz = None
+PYMUPDF_AVAILABLE = None
+
+def _ensure_fitz():
+    global fitz, PYMUPDF_AVAILABLE
+    if PYMUPDF_AVAILABLE is None:
+        try:
+            import fitz as _fitz  # PyMuPDF
+            fitz = _fitz
+            PYMUPDF_AVAILABLE = True
+        except ImportError:
+            PYMUPDF_AVAILABLE = False
+            logging.warning("PyMuPDF not available - PDF parsing disabled")
+    return PYMUPDF_AVAILABLE
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -136,7 +146,7 @@ class PDFParser:
         Returns:
             Tuple of (chunks_list, parsing_stats)
         """
-        if not PYMUPDF_AVAILABLE:
+        if not _ensure_fitz():
             raise RuntimeError("PyMuPDF not available - cannot parse PDF files")
         
         if not os.path.exists(file_path):

@@ -19,12 +19,23 @@ import time
 from .tag_chunk import TagChunk, TagChunkType, DeviceInfo
 
 # sentence_transformers import moved to lazy load in initialize_model()
-try:
-    import faiss
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    logging.warning("FAISS not available - falling back to text-based search")
+# faiss import moved to lazy load (see _ensure_faiss) - importing it eagerly at
+# module load time adds several seconds to MCP server startup and can push it
+# past the client's connection timeout.
+faiss = None
+FAISS_AVAILABLE = None
+
+def _ensure_faiss():
+    global faiss, FAISS_AVAILABLE
+    if FAISS_AVAILABLE is None:
+        try:
+            import faiss as _faiss
+            faiss = _faiss
+            FAISS_AVAILABLE = True
+        except ImportError:
+            FAISS_AVAILABLE = False
+            logging.warning("FAISS not available - falling back to text-based search")
+    return FAISS_AVAILABLE
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -86,7 +97,8 @@ class TagVectorDatabase:
     
     def build_tag_database(self, tag_chunks: List[TagChunk], force_rebuild: bool = False):
         """Build or load the vector database from tag chunks"""
-        
+        _ensure_faiss()
+
         # Check if cached version exists and is recent
         if not force_rebuild and self._cache_exists() and self._cache_is_recent():
             logger.info("Loading cached tag vector database...")
@@ -150,9 +162,10 @@ class TagVectorDatabase:
         if not self.model or not self.index:
             logger.warning("Vector search not available, falling back to text search")
             return self._text_search(query, limit, category_filter, chunk_type_filter)
-        
+
         try:
             # Create embedding for the query
+            _ensure_faiss()
             query_embedding = self.model.encode([query])
             faiss.normalize_L2(query_embedding)
             
@@ -502,7 +515,8 @@ class TagVectorDatabase:
     
     def _cache_exists(self) -> bool:
         """Check if cache files exist"""
-        return (self.data_cache.exists() and 
+        _ensure_faiss()
+        return (self.data_cache.exists() and
                 (not FAISS_AVAILABLE or self.index_cache.exists()))
     
     def _cache_is_recent(self, max_age_hours: int = 24) -> bool:
@@ -515,11 +529,12 @@ class TagVectorDatabase:
     
     def _save_to_cache(self):
         """Save vector database to cache files"""
+        _ensure_faiss()
         try:
             # Save tag chunks
             with open(self.data_cache, 'wb') as f:
                 pickle.dump(self.tag_chunks, f)
-            
+
             if FAISS_AVAILABLE and self.index is not None:
                 # Save FAISS index
                 faiss.write_index(self.index, str(self.index_cache))
@@ -535,11 +550,12 @@ class TagVectorDatabase:
     
     def _load_from_cache(self):
         """Load vector database from cache files"""
+        _ensure_faiss()
         try:
             # Load tag chunks
             with open(self.data_cache, 'rb') as f:
                 self.tag_chunks = pickle.load(f)
-            
+
             if FAISS_AVAILABLE and self.index_cache.exists():
                 # Load FAISS index
                 self.index = faiss.read_index(str(self.index_cache))

@@ -21,12 +21,23 @@ from .l5x_chunk import L5XChunk, L5XChunkType, L5XLocation
 from .sdk_powered_analyzer import SDKPoweredL5XAnalyzer
 
 # sentence_transformers import moved to lazy load in initialize_model()
-try:
-    import faiss
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    logging.warning("FAISS not available - falling back to text-based search")
+# faiss import moved to lazy load (see _ensure_faiss) - importing it eagerly at
+# module load time adds several seconds to MCP server startup and can push it
+# past the client's connection timeout.
+faiss = None
+FAISS_AVAILABLE = None
+
+def _ensure_faiss():
+    global faiss, FAISS_AVAILABLE
+    if FAISS_AVAILABLE is None:
+        try:
+            import faiss as _faiss
+            faiss = _faiss
+            FAISS_AVAILABLE = True
+        except ImportError:
+            FAISS_AVAILABLE = False
+            logging.warning("FAISS not available - falling back to text-based search")
+    return FAISS_AVAILABLE
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -164,13 +175,12 @@ class L5XVectorDatabase:
             if not self.sdk_analyzer:
                 self.sdk_analyzer = SDKPoweredL5XAnalyzer()
             
-            # Open project
-            # SDK opening disabled - too slow and unreliable  
-            logger.warning("SDK project opening disabled")
-            if False:  # Always skip SDK opening
+            # Open project via the Logix Designer SDK
+            opened = await self.sdk_analyzer.open_project(acd_path)
+            if not opened:
                 logger.error(f"Failed to open project: {acd_path}")
                 return False
-            
+
             # Discover project structure
             project_structure = await self.sdk_analyzer.discover_project_structure()
             
@@ -243,7 +253,8 @@ class L5XVectorDatabase:
     
     def build_vector_database(self, l5x_chunks: List[L5XChunk], force_rebuild: bool = False):
         """Build or load the vector database from L5X chunks"""
-        
+        _ensure_faiss()
+
         # Check if cached version exists and is recent
         if not force_rebuild and self._cache_exists() and self._cache_is_recent():
             logger.info("Loading cached L5X vector database...")
@@ -306,9 +317,10 @@ class L5XVectorDatabase:
         if not self.model or not self.index:
             logger.warning("Vector search not available, falling back to text search")
             return self._text_search(query, limit, chunk_types)
-        
+
         try:
             # Create embedding for the query
+            _ensure_faiss()
             query_embedding = self.model.encode([query])
             faiss.normalize_L2(query_embedding)
             
@@ -562,7 +574,8 @@ class L5XVectorDatabase:
     
     def _cache_exists(self) -> bool:
         """Check if cache files exist"""
-        return (self.data_cache.exists() and 
+        _ensure_faiss()
+        return (self.data_cache.exists() and
                 (not FAISS_AVAILABLE or self.index_cache.exists()))
     
     def _cache_is_recent(self, max_age_hours: int = 24) -> bool:
@@ -575,11 +588,12 @@ class L5XVectorDatabase:
     
     def _save_to_cache(self):
         """Save vector database to cache files"""
+        _ensure_faiss()
         try:
             # Save chunks data
             with open(self.data_cache, 'wb') as f:
                 pickle.dump(self.chunks_data, f)
-            
+
             if FAISS_AVAILABLE and self.index is not None:
                 # Save FAISS index
                 faiss.write_index(self.index, str(self.index_cache))
@@ -595,11 +609,12 @@ class L5XVectorDatabase:
     
     def _load_from_cache(self):
         """Load vector database from cache files"""
+        _ensure_faiss()
         try:
             # Load chunks data
             with open(self.data_cache, 'rb') as f:
                 self.chunks_data = pickle.load(f)
-            
+
             if FAISS_AVAILABLE and self.index_cache.exists():
                 # Load FAISS index
                 self.index = faiss.read_index(str(self.index_cache))

@@ -15,12 +15,23 @@ from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 import logging
 # sentence_transformers import moved to lazy load in initialize_model()
-import faiss
 import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# faiss import moved to lazy load (see _ensure_faiss) - importing it eagerly at
+# module load time adds several seconds to MCP server startup and can push it
+# past the client's connection timeout.
+faiss = None
+
+def _ensure_faiss():
+    global faiss
+    if faiss is None:
+        import faiss as _faiss
+        faiss = _faiss
+    return faiss
 
 @dataclass
 class InstructionSearchResult:
@@ -114,6 +125,7 @@ class InstructionVectorDatabase:
         
         # Build FAISS index for fast similarity search
         logger.info("Building FAISS index...")
+        _ensure_faiss()
         dimension = self.embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
         
@@ -162,6 +174,7 @@ class InstructionVectorDatabase:
         
         try:
             # Create embedding for the query
+            _ensure_faiss()
             query_embedding = self.model.encode([query])
             faiss.normalize_L2(query_embedding)
             
@@ -339,6 +352,7 @@ class InstructionVectorDatabase:
             
             if self.index is not None:
                 # Save FAISS index
+                _ensure_faiss()
                 faiss.write_index(self.index, str(self.index_cache))
             
             logger.info(f"Cached instruction vector database to {self.cache_dir}")
@@ -362,6 +376,7 @@ class InstructionVectorDatabase:
             
             # Load FAISS index if available
             if self.index_cache.exists():
+                _ensure_faiss()
                 self.index = faiss.read_index(str(self.index_cache))
             
             logger.info(f"Loaded instruction vector database from cache ({len(self.instructions_data)} instructions)")

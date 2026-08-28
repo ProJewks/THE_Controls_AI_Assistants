@@ -22,12 +22,23 @@ from .pdf_chunk import PDFChunk, PDFChunkType, PDFLocation
 from .pdf_parser import PDFParser
 
 # sentence_transformers import moved to lazy load in initialize_model()
-try:
-    import faiss
-    FAISS_AVAILABLE = True
-except ImportError:
-    FAISS_AVAILABLE = False
-    logging.warning("FAISS not available - falling back to text-based search")
+# faiss import moved to lazy load (see _ensure_faiss) - importing it eagerly at
+# module load time adds several seconds to MCP server startup and can push it
+# past the client's connection timeout.
+faiss = None
+FAISS_AVAILABLE = None
+
+def _ensure_faiss():
+    global faiss, FAISS_AVAILABLE
+    if FAISS_AVAILABLE is None:
+        try:
+            import faiss as _faiss
+            faiss = _faiss
+            FAISS_AVAILABLE = True
+        except ImportError:
+            FAISS_AVAILABLE = False
+            logging.warning("FAISS not available - falling back to text-based search")
+    return FAISS_AVAILABLE
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -165,7 +176,8 @@ class PDFVectorDatabase:
     
     def build_vector_database(self, pdf_chunks: List[PDFChunk], force_rebuild: bool = False):
         """Build or load the vector database from PDF chunks (same pattern as other DBs)"""
-        
+        _ensure_faiss()
+
         # Check if cached version exists and is recent
         if not force_rebuild and self._cache_exists() and self._cache_is_recent():
             logger.info("Loading cached PDF vector database...")
@@ -226,8 +238,9 @@ class PDFVectorDatabase:
         if not self.chunks_data:
             logger.warning("No PDF data indexed")
             return []
-        
+
         # Use vector search if available, otherwise fallback to text search
+        _ensure_faiss()
         if self.model is not None and self.index is not None and FAISS_AVAILABLE:
             return self._vector_search(query, limit, score_threshold, drawing_type_filter, equipment_filter)
         else:
@@ -390,7 +403,8 @@ class PDFVectorDatabase:
     
     def _cache_exists(self) -> bool:
         """Check if cache files exist"""
-        return (self.data_cache.exists() and 
+        _ensure_faiss()
+        return (self.data_cache.exists() and
                 self.metadata_cache.exists() and
                 (not FAISS_AVAILABLE or self.index_cache.exists()))
     
@@ -411,6 +425,7 @@ class PDFVectorDatabase:
     
     def _save_to_cache(self):
         """Save vector database to cache files"""
+        _ensure_faiss()
         try:
             # Save chunks data
             with open(self.data_cache, 'wb') as f:
@@ -439,6 +454,7 @@ class PDFVectorDatabase:
     
     def _load_from_cache(self):
         """Load vector database from cache files"""
+        _ensure_faiss()
         try:
             # Load chunks data
             with open(self.data_cache, 'rb') as f:
