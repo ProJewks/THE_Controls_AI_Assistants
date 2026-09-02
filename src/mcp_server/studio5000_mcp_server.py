@@ -8,6 +8,7 @@ syntax, and best practices directly within AI conversations.
 """
 
 import asyncio
+import html as html_lib
 import json
 import os
 import re
@@ -94,14 +95,31 @@ class Instruction:
 class Studio5000Parser:
     """Parses Studio 5000 HTML documentation"""
 
-    # Cache lives next to this file so it's found regardless of the server's cwd
-    INDEX_CACHE_FILE = Path(__file__).parent / "instruction_index_cache.json"
-
-    def __init__(self, doc_root: str):
+    def __init__(self, doc_root: str, version: str = "default"):
         self.doc_root = Path(doc_root)
+        self.version = version
         self.instructions = {}
         self.categories = {}
-        
+        # Cache lives next to this file, namespaced per documentation version so
+        # switching between e.g. v35 and v37 doc roots doesn't clobber a shared
+        # cache file and force a full re-parse every time you switch back.
+        safe_version = re.sub(r'[^A-Za-z0-9_.-]', '_', version)
+        self.INDEX_CACHE_FILE = Path(__file__).parent / f"instruction_index_cache_{safe_version}.json"
+        # Rockwell changed documentation authoring tools between Logix Designer
+        # versions: v35 and earlier ship a flat folder of numbered .htm files
+        # with a single "17691.htm" master index ("legacy"); v36+ ship an
+        # Oxygen WebHelp site with one topic-per-file under help/clinset/<Category>/
+        # ("oxygen_webhelp"). Detect which one this doc_root actually is so the
+        # right parser runs instead of assuming the docs are simply missing.
+        self.format = self._detect_format()
+
+    def _detect_format(self) -> str:
+        if (self.doc_root / "17691.htm").exists():
+            return "legacy"
+        if (self.doc_root / "help" / "clinset").is_dir():
+            return "oxygen_webhelp"
+        return "legacy"
+
     def parse_main_index(self) -> Dict[str, Any]:
         """Parse the main instruction set index"""
         index_file = self.doc_root / "17691.htm"
@@ -299,6 +317,12 @@ class Studio5000Parser:
 
     def build_instruction_index(self) -> Dict[str, Instruction]:
         """Build a comprehensive index of all instructions, reusing a cached index when the docs haven't changed"""
+        if self.format == "oxygen_webhelp":
+            return self._build_instruction_index_oxygen_webhelp()
+        return self._build_instruction_index_legacy()
+
+    def _build_instruction_index_legacy(self) -> Dict[str, Instruction]:
+        """Parse the flat numbered-.htm documentation shipped with Logix Designer v35 and earlier"""
         # Find all HTML files that might be instructions
         html_files = list(self.doc_root.glob("*.htm"))
         fingerprint = self._compute_doc_fingerprint(html_files)
@@ -321,55 +345,215 @@ class Studio5000Parser:
         self._save_cached_index(fingerprint, instructions)
         return instructions
 
+    def _build_instruction_index_oxygen_webhelp(self) -> Dict[str, Instruction]:
+        """Parse the Oxygen WebHelp documentation shipped with Logix Designer v36+.
+
+        Instead of a flat folder of numbered .htm files with one master index,
+        this format has one topic per file under help/clinset/<Category>/, and
+        real instruction topics are reliably titled "<Description> (<MNEMONIC>)"
+        e.g. "Examine if Closed (XIC)" - other topics in the same folders (UI
+        dialog-box help, etc.) don't match that pattern and are skipped so they
+        don't pollute instruction search results.
+        """
+        clinset_root = self.doc_root / "help" / "clinset"
+        html_files = [
+            f for f in clinset_root.glob("*/*.html")
+            if not any(part.lower() == "graphics" for part in f.parts)
+        ]
+        fingerprint = self._compute_doc_fingerprint(html_files)
+
+        cached_instructions = self._load_cached_index(fingerprint)
+        if cached_instructions is not None:
+            self.instructions = cached_instructions
+            return cached_instructions
+
+        name_pattern = re.compile(r'\(([A-Z][A-Z0-9_]{1,15})\)\s*$')
+        instructions: Dict[str, Instruction] = {}
+        categories: Dict[str, List[str]] = {}
+
+        for html_file in html_files:
+            try:
+                with open(html_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            except OSError:
+                continue
+
+            title_match = re.search(r'<title>(.*?)</title>', content, re.S)
+            if not title_match:
+                continue
+            title = html_lib.unescape(re.sub(r'<[^>]+>', '', title_match.group(1))).strip()
+
+            name_match = name_pattern.search(title)
+            if not name_match:
+                # Not an instruction topic page (e.g. a dialog-box help page) - skip it
+                continue
+
+            name = name_match.group(1).upper()
+            description = title[:name_match.start()].strip(' -–—')
+            category = html_file.parent.name
+
+            categories.setdefault(category, []).append(name)
+            # A handful of instructions have more than one topic page (overloads,
+            # split parts) - keep the first one found, consistent with the legacy
+            # parser's "first write wins" behavior for duplicate names.
+            if name not in instructions:
+                instructions[name] = Instruction(
+                    name=name,
+                    category=category,
+                    description=description,
+                    file_path=str(html_file.relative_to(self.doc_root)),
+                    languages=[],
+                )
+
+        self.categories = categories
+        self.instructions = instructions
+        self._save_cached_index(fingerprint, instructions)
+        return instructions
+
 class Studio5000MCPServer:
     """MCP Server for Studio 5000 documentation with optimized lazy loading"""
-    
-    def __init__(self, doc_root: str):
-        self.doc_root = doc_root
-        self.parser = Studio5000Parser(doc_root)
+
+    # Some Logix Designer doc versions ship help files that are indexed far
+    # thinner than others even though the instruction set itself is unchanged
+    # - e.g. v37's help folder was reorganized around OPC UA/networking and
+    # hardware changes, not the instruction language, so its per-instruction
+    # syntax/parameters are often missing where v36 (functionally the same
+    # software release) still has them. This maps a version to the reference
+    # version its instruction syntax/parameters may be backfilled from when
+    # its own docs come back empty.
+    SYNTAX_REFERENCE_VERSION = {
+        'v37': 'v36',
+    }
+
+    def __init__(self, doc_root: Union[str, Dict[str, str]]):
+        # doc_root is either a single path (backward compatible - one Logix
+        # Designer version's documentation) or a {version_label: path} dict
+        # so multiple installed versions (e.g. "v35" and "v37") can be
+        # queried side by side in the same running server, without a restart
+        # or env-var change to switch between them.
+        self.doc_roots = self._normalize_doc_roots(doc_root)
+        self.default_version = next(iter(self.doc_roots))
+        self.parsers = {
+            version: Studio5000Parser(path, version)
+            for version, path in self.doc_roots.items()
+        }
         self.server = MCPServer("studio5000-ai-assistant", "2.0.0")
-        self.instructions = {}
-        
+        self.instructions_by_version = {}
+
         # Initialize basic components immediately (lightweight)
         self.l5x_generator = L5XGenerator()
         self.code_assistant = CodeAssistant(mcp_server=self)
         self.enhanced_assistant = create_mcp_integrated_assistant(self)
         self.studio5000_sdk = studio5000_sdk
-        
+
         # Shared sentence transformer model for all vector databases
         self._shared_model = None
         self._model_lock = threading.Lock()
-        
+
         # Lazy initialization flags and cached integrations
         self._sdk_integration = None
         self._sdk_tools = None
-        self._instruction_integration = None
-        self._instruction_tools = None
+        self._instruction_integrations = {}  # version -> InstructionMCPIntegration
+        self._instruction_tools_cache = {}   # version -> InstructionMCPTools
         self._l5x_integration = None
         self._l5x_tools = None
         self._pdf_integration = None
         self._pdf_tools = None
         self._tag_integration = None
         self._tag_tools = None
-        
+
         # Initialization locks for thread safety
         self._init_locks = {
             'sdk': threading.Lock(),
-            'instruction': threading.Lock(), 
+            'instruction': threading.Lock(),
             'l5x': threading.Lock(),
             'pdf': threading.Lock(),
             'tag': threading.Lock()
         }
-        
+
         # Fast basic initialization only - vector DBs loaded on demand
         self._initialize_basic()
-    
+
+    @staticmethod
+    def _normalize_doc_roots(doc_root: Union[str, Dict[str, str]]) -> Dict[str, str]:
+        """Turn the constructor's doc_root argument into a {version_label: path} dict"""
+        if isinstance(doc_root, dict):
+            if not doc_root:
+                raise ValueError("doc_root dict must contain at least one version")
+            return dict(doc_root)
+        # Single path - tag it with the version segment from the path itself
+        # (".../ENU/v35/Bin/Help/..." -> "v35") so it still shows up correctly
+        # in list_documentation_versions and per-version cache filenames.
+        match = re.search(r'[\\/](v\d+)[\\/]', str(doc_root))
+        version = match.group(1) if match else "default"
+        return {version: doc_root}
+
+    @property
+    def doc_root(self) -> str:
+        """Backward-compat accessor: the default version's doc root path"""
+        return self.doc_roots[self.default_version]
+
+    @property
+    def parser(self) -> 'Studio5000Parser':
+        """Backward-compat accessor: the default version's parser"""
+        return self.parsers[self.default_version]
+
+    @property
+    def instructions(self) -> Dict[str, 'Instruction']:
+        """Backward-compat accessor: the default version's instruction index"""
+        return self.instructions_by_version.get(self.default_version, {})
+
+    def _resolve_version(self, version: Optional[str]) -> str:
+        """Resolve a caller-supplied version label, defaulting when omitted and
+        raising a clear error for an unrecognized one instead of silently
+        falling back to the wrong version's data."""
+        if version is None:
+            return self.default_version
+        if version not in self.doc_roots:
+            raise ValueError(
+                f"Unknown Logix Designer documentation version '{version}'. "
+                f"Available: {', '.join(sorted(self.doc_roots))}"
+            )
+        return version
+
+    def _backfill_syntax_from_reference(self, result: Optional[Dict], name: str, version: str) -> Optional[Dict]:
+        """If `result` has no syntax/parameters, backfill them from this
+        version's reference version (see SYNTAX_REFERENCE_VERSION) when that
+        version is loaded and has the same instruction. The result is tagged
+        with `syntax_source_version` so callers can tell the syntax/parameters
+        didn't come from `version`'s own documentation."""
+        if not result or result.get('syntax') or result.get('parameters'):
+            return result
+        reference_version = self.SYNTAX_REFERENCE_VERSION.get(version)
+        if not reference_version or reference_version not in self.instructions_by_version:
+            return result
+        reference_instruction = self.instructions_by_version[reference_version].get(name.upper())
+        if not reference_instruction:
+            return result
+        if reference_instruction.syntax:
+            result['syntax'] = reference_instruction.syntax
+        if reference_instruction.parameters:
+            result['parameters'] = reference_instruction.parameters
+        if result.get('syntax') or result.get('parameters'):
+            result['syntax_source_version'] = reference_version
+        return result
+
     def _initialize_basic(self):
         """Fast basic initialization - only load instruction index, no vector DBs"""
         import sys
         print("Starting fast initialization...", file=sys.stderr)
-        self.instructions = self.parser.build_instruction_index()
-        print(f"✅ Basic initialization complete. {len(self.instructions)} instructions loaded.", file=sys.stderr)
+        for version, parser in self.parsers.items():
+            try:
+                self.instructions_by_version[version] = parser.build_instruction_index()
+            except Exception as e:
+                print(f"⚠️ Could not build instruction index for {version} ({parser.doc_root}): {e}", file=sys.stderr)
+                self.instructions_by_version[version] = {}
+        total = sum(len(v) for v in self.instructions_by_version.values())
+        print(
+            f"✅ Basic initialization complete. {total} instructions loaded across "
+            f"{len(self.parsers)} version(s): {', '.join(self.doc_roots)} (default: {self.default_version}).",
+            file=sys.stderr
+        )
         print("📚 Vector databases will load automatically when needed for semantic search.", file=sys.stderr)
         
         # Register all tools (lightweight operation)
@@ -416,29 +600,42 @@ class Studio5000MCPServer:
             self._sdk_tools = SDKMCPTools(self.sdk_integration)
         return self._sdk_tools
     
+    def get_instruction_integration(self, version: Optional[str] = None) -> 'InstructionMCPIntegration':
+        """Lazy-loaded instruction integration for a specific Logix Designer documentation version"""
+        version = self._resolve_version(version)
+        if version not in self._instruction_integrations:
+            with self._init_locks['instruction']:
+                if version not in self._instruction_integrations:
+                    print(f"🔄 Initializing instruction documentation system for {version}...", file=sys.stderr)
+                    # Each version gets its own vector cache directory so v35 and
+                    # v37 embeddings never overwrite each other.
+                    integration = InstructionMCPIntegration(cache_dir=f"instruction_vector_cache_{version}")
+                    # Inject shared model and cache manager
+                    if hasattr(integration, 'vector_db'):
+                        if hasattr(integration.vector_db, 'model'):
+                            integration.vector_db.model = self._get_shared_model()
+                        # Inject shared cache manager for optimized caching
+                        integration.vector_db.cache_manager = shared_cache_manager
+                    self._instruction_integrations[version] = integration
+                    print(f"✅ Instruction system ready for {version}", file=sys.stderr)
+        return self._instruction_integrations[version]
+
+    def get_instruction_tools(self, version: Optional[str] = None) -> 'InstructionMCPTools':
+        """Lazy-loaded instruction tools for a specific Logix Designer documentation version"""
+        version = self._resolve_version(version)
+        if version not in self._instruction_tools_cache:
+            self._instruction_tools_cache[version] = InstructionMCPTools(self.get_instruction_integration(version))
+        return self._instruction_tools_cache[version]
+
     @property
     def instruction_integration(self):
-        """Lazy-loaded instruction integration"""
-        if self._instruction_integration is None:
-            with self._init_locks['instruction']:
-                if self._instruction_integration is None:
-                    print("🔄 Initializing instruction documentation system...", file=sys.stderr)
-                    self._instruction_integration = InstructionMCPIntegration()
-                    # Inject shared model and cache manager
-                    if hasattr(self._instruction_integration, 'vector_db'):
-                        if hasattr(self._instruction_integration.vector_db, 'model'):
-                            self._instruction_integration.vector_db.model = self._get_shared_model()
-                        # Inject shared cache manager for optimized caching
-                        self._instruction_integration.vector_db.cache_manager = shared_cache_manager
-                    print("✅ Instruction system ready", file=sys.stderr)
-        return self._instruction_integration
-    
+        """Backward-compat accessor: instruction integration for the default version"""
+        return self.get_instruction_integration()
+
     @property
     def instruction_tools(self):
-        """Lazy-loaded instruction tools"""
-        if self._instruction_tools is None:
-            self._instruction_tools = InstructionMCPTools(self.instruction_integration)
-        return self._instruction_tools
+        """Backward-compat accessor: instruction tools for the default version"""
+        return self.get_instruction_tools()
     
     @property
     def l5x_integration(self):
@@ -512,17 +709,17 @@ class Studio5000MCPServer:
             self._tag_tools = TagMCPTools
         return self._tag_tools
     
-    async def _ensure_instruction_db_ready(self):
-        """Ensure the instruction vector database is fully initialized"""
-        # Trigger lazy loading by accessing the property
-        _ = self.instruction_integration
-        
-        # Initialize with instructions if not already done
-        if hasattr(self.instruction_integration, 'initialize'):
+    async def _ensure_instruction_db_ready(self, version: Optional[str] = None):
+        """Ensure the instruction vector database for one documentation version is fully initialized"""
+        version = self._resolve_version(version)
+        integration = self.get_instruction_integration(version)
+
+        # Initialize with that version's instructions if not already done
+        if hasattr(integration, 'initialize'):
             try:
-                await self.instruction_integration.initialize(self.instructions, force_rebuild=False)
+                await integration.initialize(self.instructions_by_version[version], force_rebuild=False)
             except Exception as e:
-                print(f"Warning: Could not initialize instruction vector DB: {e}", file=sys.stderr)
+                print(f"Warning: Could not initialize instruction vector DB for {version}: {e}", file=sys.stderr)
     
     async def _ensure_sdk_db_ready(self):
         """Ensure the SDK vector database is fully initialized"""
@@ -540,34 +737,49 @@ class Studio5000MCPServer:
         """Register all MCP tools - lightweight, no vector DB initialization"""
         self.server.add_tool(
             "search_instructions",
-            "Search for PLC instructions by name, category, or description",
+            "Search for PLC instructions by name, category, or description. "
+            "Optionally scope to a specific Logix Designer documentation version "
+            "(see list_documentation_versions) if multiple are loaded.",
             self.search_instructions
         )
-        
+
         self.server.add_tool(
             "get_instruction",
-            "Get detailed information about a specific PLC instruction",
+            "Get detailed information about a specific PLC instruction. "
+            "Optionally scope to a specific Logix Designer documentation version.",
             self.get_instruction
         )
-        
+
         self.server.add_tool(
             "list_categories",
-            "List all available instruction categories",
+            "List all available instruction categories. "
+            "Optionally scope to a specific Logix Designer documentation version.",
             self.list_categories
         )
-        
+
         self.server.add_tool(
             "list_instructions_by_category",
-            "List all instructions in a specific category",
+            "List all instructions in a specific category. "
+            "Optionally scope to a specific Logix Designer documentation version.",
             self.list_instructions_by_category
         )
-        
+
         self.server.add_tool(
             "get_instruction_syntax",
-            "Get the syntax and parameters for a specific instruction",
+            "Get the syntax and parameters for a specific instruction. "
+            "Optionally scope to a specific Logix Designer documentation version, "
+            "since syntax/availability can differ between major revisions.",
             self.get_instruction_syntax
         )
-        
+
+        self.server.add_tool(
+            "list_documentation_versions",
+            "List the Logix Designer documentation versions currently loaded "
+            "(e.g. v35, v37) and which one is the default, for use with the "
+            "`version` argument on the instruction lookup tools.",
+            self.list_documentation_versions
+        )
+
         # Add new AI-powered code generation tools
         self.server.add_tool(
             "generate_ladder_logic",
@@ -802,47 +1014,57 @@ class Studio5000MCPServer:
             self.get_cache_performance
         )
     
-    async def search_instructions(self, query: str, category: Optional[str] = None) -> List[Dict]:
-        """Enhanced search for instructions using vector database"""
+    async def search_instructions(self, query: str, category: Optional[str] = None, version: Optional[str] = None) -> List[Dict]:
+        """Enhanced search for instructions using vector database.
+
+        version: optional Logix Designer documentation version label (e.g. "v35",
+        "v37") - see list_documentation_versions for what's available. Defaults
+        to the server's default version when omitted.
+        """
+        version = self._resolve_version(version)
         try:
             # Ensure vector database is ready
-            await self._ensure_instruction_db_ready()
-            
+            await self._ensure_instruction_db_ready(version)
+
             # Use vector database for semantic search
-            vector_results = await self.instruction_tools.search_instructions(query, category)
+            vector_results = await self.get_instruction_tools(version).search_instructions(query, category)
             if vector_results.get('success', False):
-                return vector_results.get('results', [])
+                results = vector_results.get('results', [])
             else:
                 # Fallback to basic search if vector search fails
                 import sys
                 print(f"Vector search failed, using fallback: {vector_results.get('error', 'Unknown error')}", file=sys.stderr)
-                return self._basic_search_instructions(query, category)
+                results = self._basic_search_instructions(query, category, version)
         except Exception as e:
             # Fallback to basic search
             import sys
             print(f"Vector search error, using fallback: {e}", file=sys.stderr)
-            return self._basic_search_instructions(query, category)
-    
-    def _basic_search_instructions(self, query: str, category: Optional[str] = None) -> List[Dict]:
+            results = self._basic_search_instructions(query, category, version)
+        for r in results:
+            r['doc_version'] = version
+        return results
+
+    def _basic_search_instructions(self, query: str, category: Optional[str] = None, version: Optional[str] = None) -> List[Dict]:
         """Fallback basic search for instructions (original implementation)"""
+        version = self._resolve_version(version)
         results = []
         query_lower = query.lower()
-        
-        for name, instruction in self.instructions.items():
+
+        for name, instruction in self.instructions_by_version[version].items():
             match_score = 0
-            
+
             # Name match (highest priority)
             if query_lower in instruction.name.lower():
                 match_score += 10
-            
+
             # Description match
             if instruction.description and query_lower in instruction.description.lower():
                 match_score += 5
-            
+
             # Category filter
             if category and instruction.category.lower() != category.lower():
                 continue
-            
+
             if match_score > 0:
                 results.append({
                     'name': instruction.name,
@@ -852,28 +1074,37 @@ class Studio5000MCPServer:
                     'match_score': match_score,
                     'search_type': 'basic_fallback'
                 })
-        
+
         # Sort by match score
         results.sort(key=lambda x: x['match_score'], reverse=True)
         return results[:20]  # Limit to top 20 results
-    
-    async def get_instruction(self, name: str) -> Optional[Dict]:
-        """Get detailed information about a specific instruction using vector database"""
+
+    async def get_instruction(self, name: str, version: Optional[str] = None) -> Optional[Dict]:
+        """Get detailed information about a specific instruction using vector database.
+
+        version: optional Logix Designer documentation version label - defaults
+        to the server's default version when omitted.
+        """
+        version = self._resolve_version(version)
         try:
             # Ensure vector database is ready
-            await self._ensure_instruction_db_ready()
-            
+            await self._ensure_instruction_db_ready(version)
+
             # Try vector database first
-            vector_result = await self.instruction_tools.get_instruction(name)
+            vector_result = await self.get_instruction_tools(version).get_instruction(name)
             if vector_result.get('success', False):
-                return vector_result.get('instruction')
-            
+                result = vector_result.get('instruction')
+                if result is not None:
+                    result['doc_version'] = version
+                    result = self._backfill_syntax_from_reference(result, name, version)
+                return result
+
             # Fallback to direct lookup
-            instruction = self.instructions.get(name.upper())
+            instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
                 return None
-            
-            return {
+
+            result = {
                 'name': instruction.name,
                 'category': instruction.category,
                 'description': instruction.description,
@@ -882,15 +1113,17 @@ class Studio5000MCPServer:
                 'parameters': instruction.parameters,
                 'examples': instruction.examples,
                 'file_path': instruction.file_path,
-                'search_type': 'direct_fallback'
+                'search_type': 'direct_fallback',
+                'doc_version': version
             }
+            return self._backfill_syntax_from_reference(result, name, version)
         except Exception as e:
             # Fallback to direct lookup
-            instruction = self.instructions.get(name.upper())
+            instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
                 return None
-            
-            return {
+
+            result = {
                 'name': instruction.name,
                 'category': instruction.category,
                 'description': instruction.description,
@@ -899,50 +1132,58 @@ class Studio5000MCPServer:
                 'parameters': instruction.parameters,
                 'examples': instruction.examples,
                 'file_path': instruction.file_path,
-                'search_type': 'direct_fallback'
+                'search_type': 'direct_fallback',
+                'doc_version': version
             }
-    
-    async def list_categories(self) -> List[str]:
+            return self._backfill_syntax_from_reference(result, name, version)
+
+    async def list_categories(self, version: Optional[str] = None) -> List[str]:
         """List all available instruction categories using vector database"""
+        version = self._resolve_version(version)
         try:
             # Ensure vector database is ready
-            await self._ensure_instruction_db_ready()
-            
+            await self._ensure_instruction_db_ready(version)
+
             # Try vector database first
-            vector_result = await self.instruction_tools.list_categories()
+            vector_result = await self.get_instruction_tools(version).list_categories()
             if vector_result.get('success', False):
                 return vector_result.get('categories', [])
-            
+
             # Fallback to direct enumeration
             categories = set()
-            for instruction in self.instructions.values():
+            for instruction in self.instructions_by_version[version].values():
                 if instruction.category:
                     categories.add(instruction.category)
             return sorted(list(categories))
         except Exception as e:
             # Fallback to direct enumeration
             categories = set()
-            for instruction in self.instructions.values():
+            for instruction in self.instructions_by_version[version].values():
                 if instruction.category:
                     categories.add(instruction.category)
             return sorted(list(categories))
-    
-    async def list_instructions_by_category(self, category: str) -> List[Dict]:
-        """List all instructions in a specific category using vector database"""
+
+    async def list_instructions_by_category(self, category: str, version: Optional[str] = None) -> List[Dict]:
+        """List all instructions in a specific category using vector database.
+
+        version: optional Logix Designer documentation version label - defaults
+        to the server's default version when omitted.
+        """
+        version = self._resolve_version(version)
         try:
             # Ensure vector database is ready
-            await self._ensure_instruction_db_ready()
-            
+            await self._ensure_instruction_db_ready(version)
+
             # Try vector database first
-            vector_result = await self.instruction_tools.get_instructions_by_category(category)
+            vector_result = await self.get_instruction_tools(version).get_instructions_by_category(category)
             if vector_result.get('success', False):
                 return vector_result.get('instructions', [])
-            
+
             # Fallback to direct enumeration
             results = []
             category_lower = category.lower()
-            
-            for instruction in self.instructions.values():
+
+            for instruction in self.instructions_by_version[version].values():
                 if instruction.category.lower() == category_lower:
                     results.append({
                         'name': instruction.name,
@@ -950,14 +1191,14 @@ class Studio5000MCPServer:
                         'languages': instruction.languages,
                         'search_type': 'direct_fallback'
                     })
-            
+
             return sorted(results, key=lambda x: x['name'])
         except Exception as e:
             # Fallback to direct enumeration
             results = []
             category_lower = category.lower()
-            
-            for instruction in self.instructions.values():
+
+            for instruction in self.instructions_by_version[version].values():
                 if instruction.category.lower() == category_lower:
                     results.append({
                         'name': instruction.name,
@@ -965,45 +1206,73 @@ class Studio5000MCPServer:
                         'languages': instruction.languages,
                         'search_type': 'direct_fallback'
                     })
-            
+
             return sorted(results, key=lambda x: x['name'])
-    
-    async def get_instruction_syntax(self, name: str) -> Optional[Dict]:
-        """Get syntax and parameter information for an instruction using vector database"""
+
+    async def get_instruction_syntax(self, name: str, version: Optional[str] = None) -> Optional[Dict]:
+        """Get syntax and parameter information for an instruction using vector database.
+
+        version: optional Logix Designer documentation version label - defaults
+        to the server's default version when omitted. Pass this explicitly when
+        checking whether an instruction/parameter is valid on a specific
+        version, since syntax can differ between major revisions.
+        """
+        version = self._resolve_version(version)
         try:
             # Ensure vector database is ready
-            await self._ensure_instruction_db_ready()
-            
+            await self._ensure_instruction_db_ready(version)
+
             # Try vector database first
-            vector_result = await self.instruction_tools.get_instruction_syntax(name)
+            vector_result = await self.get_instruction_tools(version).get_instruction_syntax(name)
             if vector_result.get('success', False):
-                return vector_result.get('syntax_info')
-            
+                result = vector_result.get('syntax_info')
+                if result is not None:
+                    result['doc_version'] = version
+                    result = self._backfill_syntax_from_reference(result, name, version)
+                return result
+
             # Fallback to direct lookup
-            instruction = self.instructions.get(name.upper())
+            instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
                 return None
-            
-            return {
+
+            result = {
                 'name': instruction.name,
                 'syntax': instruction.syntax,
                 'parameters': instruction.parameters,
                 'languages': instruction.languages,
-                'search_type': 'direct_fallback'
+                'search_type': 'direct_fallback',
+                'doc_version': version
             }
+            return self._backfill_syntax_from_reference(result, name, version)
         except Exception as e:
             # Fallback to direct lookup
-            instruction = self.instructions.get(name.upper())
+            instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
                 return None
-            
-            return {
+
+            result = {
                 'name': instruction.name,
                 'syntax': instruction.syntax,
                 'parameters': instruction.parameters,
                 'languages': instruction.languages,
-                'search_type': 'direct_fallback'
+                'search_type': 'direct_fallback',
+                'doc_version': version
             }
+            return self._backfill_syntax_from_reference(result, name, version)
+
+    async def list_documentation_versions(self) -> Dict[str, Any]:
+        """List the Logix Designer documentation versions currently loaded and
+        available to pass as the `version` argument to the instruction lookup
+        tools (search_instructions, get_instruction, get_instruction_syntax,
+        list_categories, list_instructions_by_category)."""
+        return {
+            'success': True,
+            'available_versions': sorted(self.doc_roots.keys()),
+            'default_version': self.default_version,
+            'doc_roots': {v: str(p) for v, p in self.doc_roots.items()},
+            'instruction_counts': {v: len(i) for v, i in self.instructions_by_version.items()}
+        }
     
     # New AI-powered code generation methods
     async def generate_ladder_logic(self, specification: str) -> Dict[str, Any]:
@@ -1450,14 +1719,17 @@ class Studio5000MCPServer:
             # Add some additional system info
             stats['system_info'] = {
                 'instruction_count': len(self.instructions),
+                'instruction_counts_by_version': {v: len(i) for v, i in self.instructions_by_version.items()},
+                'default_doc_version': self.default_version,
                 'loaded_systems': []
             }
             
             # Check which systems are loaded
             if self._sdk_integration is not None:
                 stats['system_info']['loaded_systems'].append('SDK Documentation')
-            if self._instruction_integration is not None:
-                stats['system_info']['loaded_systems'].append('Instruction Documentation') 
+            if self._instruction_integrations:
+                stats['system_info']['loaded_systems'].append('Instruction Documentation')
+                stats['system_info']['instruction_doc_versions_loaded'] = sorted(self._instruction_integrations.keys())
             if self._l5x_integration is not None:
                 stats['system_info']['loaded_systems'].append('L5X Analyzer')
             if self._pdf_integration is not None:
@@ -1524,19 +1796,30 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
             if name == 'search_instructions':
                 properties = {
                     'query': {'type': 'string', 'description': 'Search query'},
-                    'category': {'type': 'string', 'description': 'Optional category filter'}
+                    'category': {'type': 'string', 'description': 'Optional category filter'},
+                    'version': {'type': 'string', 'description': 'Optional Logix Designer documentation version (e.g. "v35", "v37") - see list_documentation_versions. Defaults to the server default version.'}
                 }
                 required = ['query']
             elif name in ['get_instruction', 'get_instruction_syntax']:
                 properties = {
-                    'name': {'type': 'string', 'description': 'Instruction name'}
+                    'name': {'type': 'string', 'description': 'Instruction name'},
+                    'version': {'type': 'string', 'description': 'Optional Logix Designer documentation version (e.g. "v35", "v37") - see list_documentation_versions. Defaults to the server default version.'}
                 }
                 required = ['name']
             elif name == 'list_instructions_by_category':
                 properties = {
-                    'category': {'type': 'string', 'description': 'Category name'}
+                    'category': {'type': 'string', 'description': 'Category name'},
+                    'version': {'type': 'string', 'description': 'Optional Logix Designer documentation version (e.g. "v35", "v37") - see list_documentation_versions. Defaults to the server default version.'}
                 }
                 required = ['category']
+            elif name == 'list_categories':
+                properties = {
+                    'version': {'type': 'string', 'description': 'Optional Logix Designer documentation version (e.g. "v35", "v37") - see list_documentation_versions. Defaults to the server default version.'}
+                }
+                required = []
+            elif name == 'list_documentation_versions':
+                properties = {}
+                required = []
             elif name == 'generate_ladder_logic':
                 properties = {
                     'specification': {'type': 'string', 'description': 'Natural language specification for PLC logic'}
@@ -1840,28 +2123,66 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
         }
         return response
 
+def _resolve_configured_doc_roots(cli_doc_roots: Optional[List[str]]) -> Union[str, Dict[str, str]]:
+    """Figure out which documentation root(s) to load, in priority order:
+    1. One or more --doc-root CLI args (repeatable, so multiple versions can
+       be loaded side by side in a single server instance).
+    2. STUDIO5000_DOC_PATHS env var - multiple paths separated by ';' or ',',
+       for when the MCP client config can only set env vars (e.g. Claude
+       Desktop/Code's mcpServers.env block) rather than repeat a CLI flag.
+    3. STUDIO5000_DOC_PATH env var (singular, original/backward-compatible).
+    4. The v35 install path, as before.
+
+    Each path is auto-tagged with the version segment found in it
+    (".../ENU/v37/Bin/Help/..." -> "v37"); paths with no discoverable version
+    fall back to "default".
+    """
+    default_doc_path = r'C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000'
+
+    if cli_doc_roots:
+        paths = cli_doc_roots
+    else:
+        multi = os.environ.get('STUDIO5000_DOC_PATHS')
+        if multi:
+            paths = [p.strip() for p in re.split(r'[;,]', multi) if p.strip()]
+        else:
+            paths = [os.environ.get('STUDIO5000_DOC_PATH', default_doc_path)]
+
+    if len(paths) == 1:
+        return paths[0]
+
+    doc_roots: Dict[str, str] = {}
+    for path in paths:
+        match = re.search(r'[\\/](v\d+)[\\/]', path)
+        version = match.group(1) if match else "default"
+        if version in doc_roots:
+            # Two paths mapped to the same version label - keep both by
+            # disambiguating rather than silently dropping one.
+            version = f"{version}_{len(doc_roots)}"
+        doc_roots[version] = path
+    return doc_roots
+
+
 async def main():
     """Main server entry point"""
     parser = argparse.ArgumentParser(description='Studio 5000 AI-Powered PLC Programming Assistant MCP Server')
-    
-    # Get default documentation path from environment variable or use fallback
-    default_doc_path = os.environ.get(
-        'STUDIO5000_DOC_PATH', 
-        r'C:\Program Files (x86)\Rockwell Software\Studio 5000\Logix Designer\ENU\v35\Bin\Help\ENU\rs5000'
-    )
-    
-    parser.add_argument('--doc-root', 
-                       default=default_doc_path,
-                       help='Path to Studio 5000 documentation root directory (can also set STUDIO5000_DOC_PATH env var)')
-    parser.add_argument('--test', 
+
+    parser.add_argument('--doc-root',
+                       action='append',
+                       help='Path to a Studio 5000 documentation root directory. Repeat this flag to load '
+                            'multiple Logix Designer versions (e.g. v35 and v37) side by side. Can also be '
+                            'set via STUDIO5000_DOC_PATHS (multiple paths, ";" or "," separated) or the '
+                            'original single-path STUDIO5000_DOC_PATH env var.')
+    parser.add_argument('--test',
                        action='store_true',
                        help='Run in test mode with sample queries')
-    
+
     args = parser.parse_args()
-    
+    doc_root = _resolve_configured_doc_roots(args.doc_root)
+
     # Initialize the server
     try:
-        mcp_server = Studio5000MCPServer(args.doc_root)
+        mcp_server = Studio5000MCPServer(doc_root)
     except Exception as e:
         import sys
         print(f"Error initializing server: {e}", file=sys.stderr)
@@ -1938,19 +2259,34 @@ async def main():
         print("Ready to handle MCP requests via stdin/stdout", file=sys.stderr)
         
         # JSON-RPC 2.0 stdin/stdout protocol handler
+        #
+        # Reads stdin via run_in_executor instead of a blocking input() call so
+        # the asyncio event loop keeps running (servicing SDK async callbacks,
+        # timers, etc.) while idle between requests, instead of freezing the
+        # whole process on a synchronous read.
+        loop = asyncio.get_running_loop()
         while True:
             try:
-                line = input()
-                if not line:
+                raw_line = await loop.run_in_executor(None, sys.stdin.readline)
+
+                # readline() returns '' only at true EOF (stream closed).
+                # A blank/whitespace-only line is NOT EOF - it must be skipped,
+                # not treated as a shutdown signal, or a stray blank line
+                # (e.g. a keep-alive) would silently kill the server.
+                if raw_line == '':
                     break
-                
+
+                line = raw_line.strip()
+                if not line:
+                    continue
+
                 request = json.loads(line)
                 response = await handle_mcp_request(mcp_server, request)
-                
+
                 # Only print response if it's not None (notifications return None)
                 if response is not None:
                     print(json.dumps(response), flush=True)
-                
+
             except EOFError:
                 break
             except json.JSONDecodeError as e:

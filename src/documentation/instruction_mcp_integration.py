@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 class InstructionMCPIntegration:
     """Integration layer between instruction documentation and MCP server"""
     
-    def __init__(self):
-        self.vector_db = InstructionVectorDatabase()
+    def __init__(self, cache_dir: str = "instruction_vector_cache"):
+        self.vector_db = InstructionVectorDatabase(cache_dir=cache_dir)
         self.initialized = False
         self.instruction_data = {}
     

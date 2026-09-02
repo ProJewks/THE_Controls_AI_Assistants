@@ -20,6 +20,13 @@ from .l5x_chunk import L5XChunk, L5XChunkType, L5XLocation, create_ladder_rung_c
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+try:
+    from logix_designer_sdk import LogixProject
+    _LOGIX_PROJECT_IMPORT_ERROR = None
+except ImportError as e:
+    LogixProject = None
+    _LOGIX_PROJECT_IMPORT_ERROR = e
+
 class SDKPoweredL5XAnalyzer:
     """
     Uses Studio 5000 SDK for L5X analysis and modification operations.
@@ -53,22 +60,36 @@ class SDKPoweredL5XAnalyzer:
     
     async def open_project(self, project_path: str) -> bool:
         """
-        DISABLED: SDK project opening is too slow and unreliable
-        
+        Open an ACD/L5K project file via the Logix Designer SDK.
+
+        This launches (or attaches to) the Logix Designer engine in the
+        background through the SDK's gRPC bridge, so the first call can take
+        a while for large projects - that is expected, not a hang.
+
         Args:
             project_path: Path to ACD or L5K file
-            
+
         Returns:
-            False - SDK opening disabled
+            True if the project was opened successfully
         """
-        logger.warning("SDK project opening is DISABLED - too slow and unreliable")
-        logger.info(f"Skipping SDK open for: {project_path}")
-        
-        # Just mark as "opened" for compatibility but don't actually use SDK
-        self.project_path = project_path
-        self.is_project_open = False  # Keep as False since we're not really opening
-        
-        return False  # Always return False to indicate SDK not used
+        if not self.sdk_available or LogixProject is None:
+            logger.error(f"Cannot open project - Logix Designer SDK not available: {_LOGIX_PROJECT_IMPORT_ERROR}")
+            self.is_project_open = False
+            return False
+
+        try:
+            logger.info(f"Opening project via Logix Designer SDK: {project_path}")
+            self.sdk_project = await LogixProject.open_logix_project(project_path)
+            self.project_path = project_path
+            self.is_project_open = True
+            logger.info(f"Project opened successfully: {project_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to open project {project_path}: {e}")
+            self.sdk_project = None
+            self.project_path = None
+            self.is_project_open = False
+            return False
     
     def close_project(self):
         """Close the currently open project"""
@@ -104,22 +125,32 @@ class SDKPoweredL5XAnalyzer:
         }
         
         try:
-            # Extract project overview to get structure
-            overview_path = self.temp_dir / "project_overview.L5X"
-            await self.sdk_project.partial_export_to_xml_file(
-                "Controller", str(overview_path)
-            )
-            
-            # Parse the overview L5X to discover structure
-            structure = self._parse_project_overview(overview_path)
+            # "Controller" alone is not a valid export XPath for this SDK version -
+            # export its Programs/Tags/DataTypes children separately and merge.
+            for section, filename in (
+                ("Controller/Programs", "project_overview_programs.L5X"),
+                ("Controller/Tags", "project_overview_tags.L5X"),
+                ("Controller/DataTypes", "project_overview_datatypes.L5X"),
+            ):
+                section_path = self.temp_dir / filename
+                if section_path.exists():
+                    section_path.unlink()
+                await self.sdk_project.partial_export_to_xml_file(section, str(section_path))
+
+                section_structure = self._parse_project_overview(section_path)
+                structure['programs'].extend(section_structure['programs'])
+                structure['routines'].extend(section_structure['routines'])
+                structure['udts'].extend(section_structure['udts'])
+                structure['tags'].extend(section_structure['tags'])
+
             structure['project_path'] = self.project_path
-            
+
             logger.info(f"Discovered project structure: {len(structure['programs'])} programs, "
                        f"{len(structure['routines'])} routines, {len(structure['udts'])} UDTs")
-            
+
         except Exception as e:
             logger.error(f"Failed to discover project structure: {e}")
-        
+
         return structure
     
     async def extract_routine_for_analysis(self, routine_name: str, program_name: str = "MainProgram") -> Optional[str]:
@@ -146,7 +177,9 @@ class SDKPoweredL5XAnalyzer:
             
             # Create output file path
             output_path = self.temp_dir / f"{routine_name}_routine.L5X"
-            
+            if output_path.exists():
+                output_path.unlink()
+
             # Extract routine using SDK
             await self.sdk_project.partial_export_to_xml_file(xpath, str(output_path))
             
@@ -186,9 +219,11 @@ class SDKPoweredL5XAnalyzer:
                 output_name = f"{routine_name}_all_rungs.L5X"
             
             output_path = self.temp_dir / output_name
-            
+            if output_path.exists():
+                output_path.unlink()
+
             await self.sdk_project.partial_export_to_xml_file(xpath, str(output_path))
-            
+
             logger.info(f"Extracted rungs from {routine_name} to {output_path}")
             return str(output_path)
             

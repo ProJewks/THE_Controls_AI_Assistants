@@ -55,6 +55,7 @@ test_sdk_cache/
 *.pkl
 *.faiss
 src/mcp_server/instruction_index_cache.json
+src/mcp_server/instruction_index_cache_*.json
 
 # Test Files and Generated Projects
 *.ACD
