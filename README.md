@@ -72,6 +72,9 @@ edit it by hand, run `setup.py` instead.
 - 📖 **[TEAM_USAGE_GUIDE.md](TEAM_USAGE_GUIDE.md)** - Complete workflow guide with real examples
 - ⚡ **[QUICK_REFERENCE_CARD.md](QUICK_REFERENCE_CARD.md)** - Daily commands and shortcuts  
 - 🔧 **[TEAM_TROUBLESHOOTING_GUIDE.md](TEAM_TROUBLESHOOTING_GUIDE.md)** - Common issues and solutions
+- 🗂️ **[PLC_COPILOT_PROJECT_TEMPLATE.md](PLC_COPILOT_PROJECT_TEMPLATE.md)** - How to set up a
+  per-client "PLC Copilot" project folder (`CLAUDE.md` + reuse-library convention) on top of this
+  server
 
 ## 🚀 **Quick Start for Teammates**
 
