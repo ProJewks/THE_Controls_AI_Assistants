@@ -16,6 +16,7 @@ from .enhanced_code_assistant import (
 )
 from .warehouse_automation_patterns import WarehouseAutomationPatterns, WarehousePattern
 from .code_assistant import CodeAssistant, PLCRequirement
+from plc_language import instruction_mnemonics
 
 class EnhancedLadderLogicGenerator:
     """Advanced ladder logic generator for warehouse automation"""
@@ -472,21 +473,21 @@ class EnhancedLadderLogicGenerator:
     
     def _extract_instructions_from_logic(self, ladder_logic: str) -> List[str]:
         """Extract PLC instructions from ladder logic"""
-        
+
         # Common Studio 5000 instruction patterns
         instruction_pattern = r'\b([A-Z]{2,4})\b'
         matches = re.findall(instruction_pattern, ladder_logic)
-        
-        # Filter to known instructions only
-        known_instructions = {
-            'XIC', 'XIO', 'OTE', 'OTL', 'OTU', 'OSR', 'OSF',
-            'TON', 'TOF', 'RTO', 'RES', 'CTU', 'CTD',
-            'ADD', 'SUB', 'MUL', 'DIV', 'MOV', 'COP',
-            'EQU', 'NEQ', 'LES', 'LEQ', 'GRT', 'GEQ',
-            'MAH', 'MAJ', 'MAM', 'MAS', 'MSG', 'GSV', 'SSV'
-        }
-        
-        return list(set(match for match in matches if match in known_instructions))
+
+        # Filter to known instructions only. Uses the shared, wider registry
+        # (plc_language.instruction_mnemonics) rather than a small hardcoded
+        # set here - the old 27-mnemonic set silently dropped any real
+        # instruction it didn't happen to list, under-reporting
+        # instructions_used to the documentation-level validation phase
+        # (see ai_assistant/mcp_integration.py's Phase 1).
+        return list(set(
+            match for match in matches
+            if instruction_mnemonics.is_instruction(match)
+        ))
     
     async def _validate_instructions(self, instructions: List[str]) -> List[str]:
         """Validate instructions using MCP server"""

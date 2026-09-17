@@ -12,64 +12,13 @@ import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
-# Common Studio 5000 instructions (hardcoded for fast validation)
-COMMON_INSTRUCTIONS = {
-    # Basic Instructions
-    'XIC', 'XIO', 'OTE', 'OTL', 'OTU', 'ONS', 'OSR', 'OSF',
-    
-    # Timer Instructions  
-    'TON', 'TOF', 'RTO',
-    
-    # Counter Instructions
-    'CTU', 'CTD', 'CTC', 
-    
-    # Math Instructions
-    'ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'SQR', 'SQRT',
-    'NEG', 'ABS', 'MIN', 'MAX', 'LIM', 'MUX',
-    
-    # Comparison Instructions
-    'EQU', 'NEQ', 'LES', 'LEQ', 'GRT', 'GEQ', 'MEQ',
-    
-    # Logical Instructions
-    'AND', 'OR', 'XOR', 'NOT', 'BAND', 'BOR', 'BXOR',
-    
-    # Move Instructions
-    'MOV', 'MVM', 'SWPB', 'CLR',
-    
-    # Convert Instructions
-    'TOD', 'FRD', 'DEG', 'RAD',
-    
-    # File/Array Instructions
-    'COP', 'CPS', 'FLL', 'AVE', 'SRT', 'STD',
-    'FFL', 'FFU', 'LFL', 'LFU', 'FAL', 'FSC', 'BSL', 'BSR',
+from plc_language import CURATED_MNEMONICS, instruction_mnemonics
 
-    # ASCII String Instructions
-    'FIND', 'MID', 'CONCAT', 'INSERT', 'DELETE',
-
-    # ASCII Conversion Instructions
-    'DTOS', 'STOD',
-
-    # Timer/Counter reset (Timer and Counter Instructions category)
-    'RES',
-    
-    # Program Control
-    'JMP', 'LBL', 'JSR', 'RET', 'SBR', 'FOR', 'BRK',
-    'MCR', 'END', 'TND', 'UID', 'UIE', 'AFI', 'NOP',
-    
-    # System Instructions
-    'GSV', 'SSV', 'IOT', 'MSG', 'PID', 'PIDE',
-    
-    # Advanced Instructions
-    'ALMA', 'ALMD', 'BAND', 'BOR', 'BXOR', 'BTDT',
-    'DEDT', 'DERV', 'HMIBC', 'HPF', 'INTG', 'LPF',
-    'MAAT', 'MAFR', 'MAHD', 'MAHO', 'MAOC', 'MAPC',
-    'MAST', 'MATC', 'MAXC', 'MDAC', 'MDCC', 'MDOC',
-    'MDSF', 'MRHD', 'MRAT', 'MRCC', 'MRCS', 'MRHD',
-    'MRST', 'MSET', 'MTLF', 'MTTP', 'MVMT', 'PATT',
-    'PCMD', 'PRNP', 'RESD', 'RLLK', 'RMPD', 'RMPS',
-    'SCRV', 'SEL', 'SIZE', 'SMAT', 'SMOC', 'STOS',
-    'SWPB', 'TONR', 'TOFR', 'UPDN'
-}
+# Back-compat alias: sdk_verifier_clean.py and verification/__init__.py both
+# reference COMMON_INSTRUCTIONS by this name. The actual curated set now
+# lives in plc_language.mnemonics so it can be shared with l5x_analyzer
+# without either package importing the other (see src/plc_language/__init__.py).
+COMMON_INSTRUCTIONS = CURATED_MNEMONICS
 
 @dataclass
 class VerificationError:
@@ -101,10 +50,22 @@ class VerificationResult:
 class SDKVerifier:
     """Fast ladder logic verifier without SDK dependencies"""
     
-    def __init__(self):
-        """Initialize the fast verifier"""
+    def __init__(self, version: Optional[str] = None):
+        """Initialize the fast verifier.
+
+        Args:
+            version: Optional default Studio 5000 doc version ('v35', 'v36',
+                'v37', ...) used to widen the known-instruction check via
+                plc_language.instruction_mnemonics.known_instructions(). Can
+                be overridden per call via context['version']. Left as None,
+                verification still works using CURATED_MNEMONICS plus
+                whatever version(s) the server has registered - this keeps
+                the module-level `sdk_verifier` singleton usable with zero
+                arguments and no server handle, exactly as before.
+        """
         self.sdk_available = False  # We don't use SDK anymore
-        
+        self.version = version
+
         # Default controller type for verification
         self.default_controller_type = "1756-L83E"
         self.default_major_revision = 35
@@ -204,18 +165,27 @@ class SDKVerifier:
                 build_info={'verification_method': 'fast_validation'}
             )
         
+        # 'version' lets a caller widen the known-instruction check to a
+        # specific Rockwell doc version's parsed index (see
+        # plc_language.instruction_mnemonics.known_instructions). Falls back
+        # to this verifier's own default, which is None for the bare
+        # module-level singleton - known_instructions() then unions
+        # CURATED_MNEMONICS with every version the server has registered.
+        version = (context or {}).get('version', self.version)
+
         # Split into rungs for individual validation
         rungs = [rung.strip() for rung in ladder_logic.split(';') if rung.strip()]
-        
+
         for rung_idx, rung in enumerate(rungs):
             # 1. Syntax validation
             syntax_errors = self._validate_ladder_syntax(rung, rung_idx)
             errors.extend(syntax_errors)
-            
-            # 2. Instruction validation
-            instruction_errors = self._validate_instructions_fast(rung, rung_idx)
-            errors.extend(instruction_errors)
-            
+
+            # 2. Instruction validation - unrecognized names are warnings, not
+            # errors (see _validate_instructions_fast docstring for why).
+            instruction_warnings = self._validate_instructions_fast(rung, rung_idx, version)
+            warnings.extend(instruction_warnings)
+
             # 3. Basic structure validation
             structure_warnings = self._validate_basic_structure(rung, rung_idx)
             warnings.extend(structure_warnings)
@@ -366,24 +336,38 @@ class SDKVerifier:
 
         return errors
 
-    def _validate_instructions_fast(self, rung: str, rung_number: int) -> List[VerificationError]:
-        """Fast instruction validation against known instruction set"""
-        errors = []
-        
+    def _validate_instructions_fast(self, rung: str, rung_number: int,
+                                     version: Optional[str] = None) -> List[VerificationWarning]:
+        """Check instruction names against the known instruction set.
+
+        This is a warning, not an error: the extraction regex matches ANY
+        capitalized identifier followed by '(', which also matches every
+        AOI and UDT-instance call (e.g. FB_MDR_AI2(...)) - names that are
+        never going to appear in any instruction list because they're
+        project-specific, not Studio 5000 built-ins. Hard-failing validation
+        on those would reject legitimate AOI-heavy ladder logic outright.
+        Reporting them as warnings keeps genuine typos visible without
+        blocking real logic that just happens to call an AOI this validator
+        has never heard of.
+        """
+        warnings = []
+
         # Extract all instruction names using regex
         # Pattern matches: INSTRUCTION_NAME(parameters)
         instruction_pattern = r'\b([A-Z][A-Z0-9_]*)\s*\('
         instructions_found = re.findall(instruction_pattern, rung)
-        
+
         for instruction in instructions_found:
-            if instruction not in COMMON_INSTRUCTIONS:
-                errors.append(VerificationError(
-                    code="UNKNOWN_INSTRUCTION", 
-                    message=f"Unknown or invalid instruction: {instruction}",
+            if not instruction_mnemonics.is_instruction(instruction, version):
+                warnings.append(VerificationWarning(
+                    code="UNKNOWN_INSTRUCTION",
+                    message=f"'{instruction}' is not a recognized Studio 5000 instruction - "
+                            f"this is expected for AOI/UDT instance calls, but flag it if it "
+                            f"was meant to be a built-in instruction.",
                     line_number=rung_number
                 ))
-        
-        return errors
+
+        return warnings
 
     def _validate_basic_structure(self, rung: str, rung_number: int) -> List[VerificationWarning]:
         """Validate basic ladder logic structure and patterns"""

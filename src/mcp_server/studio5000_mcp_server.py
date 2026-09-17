@@ -57,6 +57,7 @@ from documentation.instruction_mcp_integration import InstructionMCPIntegration,
 from l5x_analyzer.l5x_mcp_integration import L5XSDKMCPIntegration, L5XMCPTools
 from drawings_analyzer.pdf_mcp_integration import PDFMCPIntegration, PDFMCPTools
 from tag_analyzer.tag_mcp_integration import TagMCPIntegration, TagMCPTools
+from plc_language import instruction_mnemonics
 
 # MCP imports (we'll implement a simplified version)
 class MCPServer:
@@ -561,6 +562,14 @@ class Studio5000MCPServer:
             except Exception as e:
                 print(f"⚠️ Could not build instruction index for {version} ({parser.doc_root}): {e}", file=sys.stderr)
                 self.instructions_by_version[version] = {}
+        # Push the parsed instruction names into the shared plc_language
+        # registry so the ladder-logic validator (and, later, any L5X
+        # cross-reference tooling) can widen its known-instruction check
+        # beyond its own curated set - see plc_language.mnemonics for why
+        # this is a union, never a replacement, and why it's a push from the
+        # server rather than either consumer reaching back for a server handle.
+        for version, index in self.instructions_by_version.items():
+            instruction_mnemonics.register_documented(version, index.keys())
         total = sum(len(v) for v in self.instructions_by_version.values())
         print(
             f"✅ Basic initialization complete. {total} instructions loaded across "
