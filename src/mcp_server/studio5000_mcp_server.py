@@ -1313,26 +1313,39 @@ class Studio5000MCPServer:
             controller_name = routine_spec.get('controller_name', 'MTN6_MCM06')
             software_revision = routine_spec.get('software_revision', '36.02')
             save_path = routine_spec.get('save_path')
-            
+            language = routine_spec.get('language', 'RLL')
+
+            # This generator only produces ladder (RLL). Previously any request
+            # was silently forced to RLL with no indication ST wasn't actually
+            # supported - reject explicitly instead so callers don't get ladder
+            # logic back when they asked for Structured Text.
+            if language.upper() not in ('RLL', 'LADDER'):
+                return {
+                    'success': False,
+                    'error': f"language='{language}' is not supported - this generator only produces ladder (RLL). "
+                             f"There is no Structured Text code generation path in this tool yet.",
+                    'message': 'Unsupported routine language requested'
+                }
+
             # Generate ladder logic using enhanced assistant
             ladder_result = await self.enhanced_assistant.generate_ladder_logic(specification)
-            
+
             if not ladder_result.get('success', False):
                 return {
                     'success': False,
                     'error': ladder_result.get('error', 'Failed to generate ladder logic'),
                     'message': 'Failed to generate ladder logic for routine'
                 }
-            
+
             # Parse the generated ladder logic into rungs
             ladder_logic = ladder_result.get('ladder_logic', '')
             ladder_lines = [line.strip() for line in ladder_logic.split('\n') if line.strip()]
-            
+
             # Create rungs from ladder logic
             rungs = []
             rung_number = 0
             current_comment = None
-            
+
             for line in ladder_lines:
                 if line.startswith('//'):
                     # This is a comment for the next rung
@@ -1347,32 +1360,22 @@ class Studio5000MCPServer:
                     rungs.append(rung)
                     rung_number += 1
                     current_comment = None
-            
-            # If no rungs were created, create a simple default rung
+
+            # If nothing usable came out of generation, fail honestly instead of
+            # silently substituting a canned demo routine while still reporting
+            # success:true - a caller had no way to tell a real request apart
+            # from this fallback ever having fired.
             if not rungs:
-                rungs = [
-                    LadderRung(
-                        number=0,
-                        logic="XIC(Start_Test)XIO(Stop_Test)OTL(Test_Running);",
-                        comment="Start/Stop logic"
-                    ),
-                    LadderRung(
-                        number=1,
-                        logic="XIC(Test_Running)TON(Test_Timer,5000,0);",
-                        comment="Timer logic - 5 second timer"
-                    ),
-                    LadderRung(
-                        number=2,
-                        logic="XIC(Test_Timer.EN)OTE(Test_Output);",
-                        comment="Output active during timer"
-                    ),
-                    LadderRung(
-                        number=3,
-                        logic="XIC(Test_Timer.DN)OTU(Test_Running);",
-                        comment="Auto-reset when timer done"
-                    )
-                ]
-            
+                return {
+                    'success': False,
+                    'error': "Generation produced no usable ladder rungs for this specification. "
+                             "The underlying generator matches a small fixed library of warehouse-automation "
+                             "patterns by keyword - it does not synthesize new logic from an arbitrary "
+                             "specification, so specs that don't match one of those patterns produce nothing.",
+                    'message': 'Failed to generate ladder logic for routine',
+                    'specification_echo': specification[:200]
+                }
+
             # Create the routine
             routine = Routine(
                 name=routine_name,
@@ -1865,7 +1868,8 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                         'properties': {
                             'ladder_logic': {'type': 'string', 'description': 'Ladder logic code to validate'},
                             'instructions_used': {'type': 'array', 'description': 'List of instructions used (optional)'},
-                            'controller_type': {'type': 'string', 'description': 'Controller type for validation (optional, default: 1756-L83E)'}
+                            'controller_type': {'type': 'string', 'description': 'Controller type for validation (optional, default: 1756-L83E)'},
+                            'language': {'type': 'string', 'description': "Routine language: 'RLL' (default) or 'ST'. For ST, only documentation-level instruction validation runs - the SDK build check is skipped because it treats ST control-flow syntax (IF/FOR/END_IF/...) as invalid ladder rungs."}
                         }
                     }
                 }

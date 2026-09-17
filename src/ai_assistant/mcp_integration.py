@@ -88,18 +88,25 @@ class MCPIntegratedAssistant:
                 - 'controller_type': Controller type for SDK verification (optional)
                 - 'project_path': Path to existing ACD project for real SDK validation (optional)
                 - 'skip_sdk_verification': Skip SDK verification if True (optional)
-        
+                - 'language': 'RLL' (default) or 'ST'. The SDK-build verification phase
+                  (Phase 2 below) assumes RLL rung-per-line text and misreads Structured
+                  Text control-flow lines (IF/FOR/END_IF/...) as invalid ladder rungs -
+                  pass language='ST' to skip that phase instead of getting bogus
+                  "no valid instructions found in rung N" errors for legitimate ST code.
+                  Documentation-level instruction validation (Phase 1) still runs either way.
+
         Returns:
             Dictionary with comprehensive validation results including:
             - Documentation validation results
-            - SDK build verification results
+            - SDK build verification results (RLL only - always skipped for ST, see above)
             - Combined validation status
         """
-        
+
         ladder_logic = logic_spec.get('ladder_logic', '')
         instructions_used = logic_spec.get('instructions_used', [])
         controller_type = logic_spec.get('controller_type', '1756-L83E')
-        skip_sdk_verification = logic_spec.get('skip_sdk_verification', False)
+        language = logic_spec.get('language', 'RLL').upper()
+        skip_sdk_verification = logic_spec.get('skip_sdk_verification', False) or language == 'ST'
         
         # Phase 1: Documentation-based validation (existing functionality)
         doc_validation_results = []
@@ -121,19 +128,33 @@ class MCPIntegratedAssistant:
             except Exception as e:
                 doc_errors.append(f"Validation error for {instruction}: {str(e)}")
         
-        # Analyze ladder logic structure
+        # Analyze ladder logic structure. These heuristics (rung-per-line,
+        # XIC/OTE/TON keyword counting) assume RLL text - for ST they still run
+        # (harmless: just instruction-name substring counts) but the resulting
+        # labels like 'rungs_estimated' don't mean anything for ST, so flag that.
         structure_analysis = self._analyze_ladder_structure(ladder_logic)
-        
+        if language == 'ST':
+            structure_analysis['note'] = ("These structure metrics (rungs_estimated, complexity_score) "
+                                           "assume RLL rung-per-line text and are not meaningful for ST code.")
+
         # Check for common issues
         common_issues = self._check_common_issues(ladder_logic)
         doc_warnings.extend(common_issues)
-        
+
         # Documentation validation result
         doc_is_valid = len(doc_errors) == 0
-        
+
         # Phase 2: SDK-based verification (NEW!) with timeout protection
         sdk_verification = None
         sdk_is_valid = True  # Default to true if SDK verification is skipped
+
+        if language == 'ST' and ladder_logic.strip():
+            doc_warnings.append(
+                "SDK build verification was skipped for language='ST': the verifier splits input "
+                "line-by-line and treats each as a ladder rung, so it misreads ST control-flow syntax "
+                "(IF/FOR/END_IF/...) as invalid rungs. Only documentation-level instruction validation "
+                "(Phase 1 above) applies to ST today - there is no ST-aware SDK build check yet."
+            )
         
         if not skip_sdk_verification and ladder_logic.strip():
             try:
