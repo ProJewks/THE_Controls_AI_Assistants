@@ -19,6 +19,7 @@ import time
 
 from .l5x_chunk import L5XChunk, L5XChunkType, L5XLocation
 from .sdk_powered_analyzer import SDKPoweredL5XAnalyzer
+from .l5x_xref import L5XTagXref, TagXrefIndex
 
 # sentence_transformers import moved to lazy load in initialize_model()
 # faiss import moved to lazy load (see _ensure_faiss) - importing it eagerly at
@@ -42,6 +43,25 @@ def _ensure_faiss():
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Reuses the server's shared lock (so a concurrent tools/call can't build the
+# xref twice, or read it mid-rebuild while build_vector_database reassigns
+# chunks_data), but not its storage - SharedCacheManager only has file-
+# validity/staleness helpers, no key/value store, so xref caching below is a
+# plain in-memory dict. Falls back to a private lock if mcp_server isn't on
+# the path (e.g. this module imported in isolation), so l5x_analyzer never
+# hard-depends on mcp_server - mcp_server already depends on l5x_analyzer,
+# and a two-way dependency would be a cycle.
+try:
+    from mcp_server.cache_manager import shared_cache_manager
+except ImportError:
+    import threading as _threading
+
+    class _FallbackCacheManager:
+        def get_cache_lock(self, name):
+            return _threading.Lock()
+
+    shared_cache_manager = _FallbackCacheManager()
 
 @dataclass
 class L5XSearchResult:
@@ -84,6 +104,13 @@ class L5XVectorDatabase:
         
         # Project indexing status
         self.indexed_projects = {}
+
+        # Exact-match tag cross-reference (see l5x_xref.py). Cached per
+        # project_name (None = all indexed projects combined), rebuilt from
+        # chunks_data on first request after any (re-)index - see
+        # invalidate_xref() and get_xref().
+        self._xref_builder = L5XTagXref()
+        self._xref_cache: Dict[Optional[str], "TagXrefIndex"] = {}
     
     def initialize_model(self):
         """Initialize the sentence transformer model"""
@@ -296,10 +323,11 @@ class L5XVectorDatabase:
             logger.info("Loading cached L5X vector database...")
             self._load_from_cache()
             return
-        
+
         logger.info(f"Building vector database for {len(l5x_chunks)} L5X chunks...")
-        
+
         self.chunks_data = l5x_chunks
+        self.invalidate_xref()
         self.initialize_model()
         
         if self.model is None or not FAISS_AVAILABLE:
@@ -403,6 +431,69 @@ class L5XVectorDatabase:
             logger.error(f"Vector search failed: {e}")
             return self._text_search(query, limit, chunk_types)
     
+    def get_xref(self, project_name: Optional[str] = None):
+        """
+        Get the exact-match tag cross-reference index, building and caching
+        it on first request. Complements search_l5x_content's semantic
+        search with guaranteed recall for "every reference to tag X" - see
+        l5x_xref.py for why a regex index and semantic search are both
+        needed rather than one replacing the other.
+
+        Args:
+            project_name: Optional - restrict to one indexed project. Omit
+                to build a combined index over every indexed project's chunks.
+
+        Returns:
+            A TagXrefIndex, or a dict with an 'error' key if the request
+            can't be satisfied right now (no content indexed yet, no
+            content for that project, or a stale pre-project_name cache
+            that needs re-indexing - see the check below).
+        """
+        if project_name in self._xref_cache:
+            return self._xref_cache[project_name]
+
+        if not self.chunks_data:
+            return {'error': 'No L5X content has been indexed yet. '
+                              'Use index_acd_project or index_exported_l5x_files first.'}
+
+        if project_name:
+            scoped_chunks = [c for c in self.chunks_data if getattr(c, 'project_name', None) == project_name]
+            if not scoped_chunks:
+                # Distinguish "this project genuinely has zero chunks" from
+                # "the cached chunk data predates project_name and needs a
+                # re-index" - silently returning an empty index for the
+                # latter would read as "this tag is unused", which is a
+                # worse wrong answer than no answer at all.
+                any_attributed = any(getattr(c, 'project_name', None) is not None for c in self.chunks_data)
+                if not any_attributed:
+                    return {
+                        'error': "Indexed chunk data has no project_name attribution (this is a stale "
+                                 "cache from before per-project scoping was added). Re-index with "
+                                 "force_rebuild=True before requesting a specific project_name.",
+                        'stale_cache': True,
+                    }
+                return {
+                    'error': f"No indexed content found for project '{project_name}'.",
+                    'indexed_projects': sorted(self.indexed_projects.keys()),
+                }
+        else:
+            scoped_chunks = self.chunks_data
+
+        with shared_cache_manager.get_cache_lock('l5x_xref'):
+            if project_name in self._xref_cache:  # re-check after acquiring the lock
+                return self._xref_cache[project_name]
+            index = self._xref_builder.build(scoped_chunks, project_scope=project_name)
+            self._xref_cache[project_name] = index
+            return index
+
+    def invalidate_xref(self) -> None:
+        """Clear every cached cross-reference index. Called from the two
+        places chunks_data is (re)assigned - build_vector_database() and
+        _load_from_cache(). _merge_project_chunks already rebuilds the whole
+        cross-project chunk list on every index call, so per-project
+        surgical invalidation would buy nothing; just clear everything."""
+        self._xref_cache.clear()
+
     def find_optimal_insertion_point(self, query: str, routine_name: str) -> Tuple[int, float]:
         """
         Find the best rung position to insert new logic based on semantic similarity
@@ -686,6 +777,7 @@ class L5XVectorDatabase:
             # Load chunks data
             with open(self.data_cache, 'rb') as f:
                 self.chunks_data = pickle.load(f)
+            self.invalidate_xref()
 
             if FAISS_AVAILABLE and self.index_cache.exists():
                 # Load FAISS index

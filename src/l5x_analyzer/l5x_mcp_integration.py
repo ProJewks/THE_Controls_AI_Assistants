@@ -31,6 +31,8 @@ class L5XMCPTools(Enum):
     FIND_RELATED_COMPONENTS = "find_related_components"
     GET_PROJECT_OVERVIEW = "get_project_overview"
     BATCH_ROUTINE_ANALYSIS = "batch_routine_analysis"
+    FIND_TAG_REFERENCES = "find_tag_references"
+    SEARCH_TAG_REFERENCES = "search_tag_references"
 
 class L5XSDKMCPIntegration:
     """
@@ -793,7 +795,131 @@ class L5XSDKMCPIntegration:
                 'success': False,
                 'error': f'Failed to get project overview: {str(e)}'
             }
-    
+
+    async def find_tag_references(self, tag_name: str, project_name: Optional[str] = None,
+                                   access: Optional[str] = None, include_members: bool = True,
+                                   limit: int = 200) -> Dict[str, Any]:
+        """
+        Exact (non-semantic) cross-reference: every rung/ST line in indexed
+        content that references tag_name, with read/write classification
+        where it can be derived. Complements search_l5x_content's semantic
+        search - guaranteed recall for a specific tag, rather than
+        similarity ranking that can drop a genuinely relevant rung below
+        its score threshold.
+
+        Args:
+            tag_name: Exact tag or dotted member reference, e.g. "Motor_1"
+                or "Motor_1.Running". Case-insensitive (Logix is
+                case-insensitive, case-preserving).
+            project_name: Optional - restrict to one indexed project. Omit
+                to search every indexed project.
+            access: Optional filter - "read", "write", or "unknown".
+            include_members: Also return references to members of
+                tag_name (e.g. Motor_1.Running when asked for Motor_1).
+                Default True.
+            limit: Maximum references to return (default 200).
+
+        Returns:
+            Dictionary with matching references and coverage limitations.
+        """
+        try:
+            xref = self.vector_db.get_xref(project_name=project_name)
+            if isinstance(xref, dict):
+                return {'success': False, **xref}
+
+            matches = xref.lookup(tag_name, include_members=include_members, access=access)
+            total_found = len(matches)
+
+            return {
+                'success': True,
+                'tag_name': tag_name,
+                'project_scope': project_name or 'all indexed projects',
+                'total_found': total_found,
+                'references': [self._serialize_reference(r) for r in matches[:limit]],
+                'truncated': total_found > limit,
+                'limitations': self._xref_limitations(xref),
+            }
+
+        except Exception as e:
+            logger.error(f"Error finding tag references for {tag_name}: {e}")
+            return {
+                'success': False,
+                'error': f'Tag reference lookup failed: {str(e)}'
+            }
+
+    async def search_tag_references(self, pattern: str, project_name: Optional[str] = None,
+                                     regex: bool = True, limit: int = 50,
+                                     refs_per_symbol: int = 10) -> Dict[str, Any]:
+        """
+        Find indexed tag/member NAMES matching a pattern (not logic text),
+        and list where each is referenced.
+
+        Args:
+            pattern: Pattern matched against symbol names, e.g. "^Conv3_".
+                An invalid regex falls back to a literal substring match.
+            project_name: Optional - restrict to one indexed project.
+            regex: Treat pattern as a regular expression (default True);
+                False forces literal substring matching.
+            limit: Maximum distinct symbols to return (default 50).
+            refs_per_symbol: Maximum references listed per symbol
+                (default 10).
+
+        Returns:
+            Dictionary mapping matched symbol names to their references.
+        """
+        try:
+            xref = self.vector_db.get_xref(project_name=project_name)
+            if isinstance(xref, dict):
+                return {'success': False, **xref}
+
+            matched = xref.search(pattern, regex=regex, limit=limit)
+            symbols = {
+                symbol: [self._serialize_reference(r) for r in refs[:refs_per_symbol]]
+                for symbol, refs in matched.items()
+            }
+
+            return {
+                'success': True,
+                'pattern': pattern,
+                'project_scope': project_name or 'all indexed projects',
+                'symbols_found': len(symbols),
+                'symbols': symbols,
+                'limitations': self._xref_limitations(xref),
+            }
+
+        except Exception as e:
+            logger.error(f"Error searching tag references for pattern {pattern}: {e}")
+            return {
+                'success': False,
+                'error': f'Tag reference search failed: {str(e)}'
+            }
+
+    @staticmethod
+    def _serialize_reference(ref) -> Dict[str, Any]:
+        return {
+            'symbol': ref.symbol,
+            'base_tag': ref.base_tag,
+            'access': ref.access,
+            'instruction': ref.instruction,
+            'operand_index': ref.operand_index,
+            'program': ref.program,
+            'routine': ref.routine,
+            'rung_number': ref.rung_number,
+            'line_number': ref.line_number,
+            'project_name': ref.project_name,
+        }
+
+    @staticmethod
+    def _xref_limitations(xref) -> Dict[str, Any]:
+        return {
+            'note': 'This index covers indexed ladder (RLL) rungs and Structured Text lines only. '
+                    'AOI internal logic, FBD/SFC routines, and controller/program tag declarations '
+                    'are not indexed - "no references found" means none were found in what was '
+                    'indexed, not that the tag is definitely unused.',
+            'skipped_chunks': dict(xref.skipped_chunks),
+            'possible_aoi_calls': dict(xref.aoi_calls),
+        }
+
     def get_available_tools(self) -> Dict[str, str]:
         """Get list of available MCP tools"""
         return {

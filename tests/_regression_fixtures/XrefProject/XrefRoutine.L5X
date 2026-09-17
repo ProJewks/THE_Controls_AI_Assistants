@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="XrefRoutine" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportDate="Wed Sep 16 11:05:00 2026" ExportOptions="References NoRawData L5KData DecoratedData Context ProductDefinedTypes IOTags Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="XrefProject_Controller">
+<DataTypes Use="Context">
+</DataTypes>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram" Class="Standard">
+<Routines Use="Context">
+<Routine Use="Target" Name="XrefRoutine" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment>
+<![CDATA[Basic read/write]]>
+</Comment>
+<Text>
+<![CDATA[XIC(Motor_1.Running)OTE(Motor_1_Cmd);]]>
+</Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Comment>
+<![CDATA[Branch - two reads, one write]]>
+</Comment>
+<Text>
+<![CDATA[[XIC(Perm_A),XIO(Perm_B)]OTE(Combined_Out);]]>
+</Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Comment>
+<![CDATA[MOV - source read, dest write]]>
+</Comment>
+<Text>
+<![CDATA[MOV(Src_Val,Dest_Val);]]>
+</Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Comment>
+<![CDATA[Timer - structure is written]]>
+</Comment>
+<Text>
+<![CDATA[TON(Delay_Tmr,5000,0);]]>
+</Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Comment>
+<![CDATA[JSR - operand 0 is a routine name, not a tag]]>
+</Comment>
+<Text>
+<![CDATA[JSR(SubRoutine,0);]]>
+</Text>
+</Rung>
+<Rung Number="5" Type="N">
+<Comment>
+<![CDATA[AOI call - unrecognized instruction, operands are tags with unknown access]]>
+</Comment>
+<Text>
+<![CDATA[MyAOI(MyAOI_Inst,Motor_1,Speed_SP);]]>
+</Text>
+</Rung>
+<Rung Number="6" Type="N">
+<Comment>
+<![CDATA[Array index (with identifier index) and bit address]]>
+</Comment>
+<Text>
+<![CDATA[XIC(Arr[Idx].Bit)OTE(Sts.3);]]>
+</Text>
+</Rung>
+<Rung Number="7" Type="N">
+<Comment>
+<![CDATA[Tags named after glossary-only doc entries - must still be indexed]]>
+</Comment>
+<Text>
+<![CDATA[XIC(PV)XIC(IO)XIC(TIMER)OTE(Reg_Out);]]>
+</Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

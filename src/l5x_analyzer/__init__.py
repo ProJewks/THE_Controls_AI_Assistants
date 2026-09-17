@@ -10,15 +10,19 @@ from .l5x_chunk import L5XChunk, L5XChunkType
 from .sdk_powered_analyzer import SDKPoweredL5XAnalyzer
 from .l5x_vector_db import L5XVectorDatabase, L5XSearchResult
 from .l5x_mcp_integration import L5XSDKMCPIntegration, L5XMCPTools
+from .l5x_xref import L5XTagXref, TagXrefIndex, TagReference
 
 __all__ = [
     'L5XChunk',
-    'L5XChunkType', 
+    'L5XChunkType',
     'SDKPoweredL5XAnalyzer',
     'L5XVectorDatabase',
     'L5XSearchResult',
     'L5XSDKMCPIntegration',
-    'L5XMCPTools'
+    'L5XMCPTools',
+    'L5XTagXref',
+    'TagXrefIndex',
+    'TagReference',
 ]
 
 __version__ = '1.0.0'

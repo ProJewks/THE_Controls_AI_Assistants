@@ -930,7 +930,21 @@ class Studio5000MCPServer:
             "Get comprehensive overview of project structure",
             self.get_project_overview
         )
-        
+
+        self.server.add_tool(
+            "find_tag_references",
+            "Exact (non-semantic) cross-reference: every rung/ST line in indexed "
+            "L5X/ACD content that references a tag, with read/write classification. "
+            "Complements search_l5x_content with guaranteed recall for a specific tag.",
+            self.find_tag_references
+        )
+
+        self.server.add_tool(
+            "search_tag_references",
+            "Find indexed tag/member names matching a pattern and list where each is referenced.",
+            self.search_tag_references
+        )
+
         # Add PDF drawings tools
         self.server.add_tool(
             "index_pdf_drawings",
@@ -1663,7 +1677,27 @@ class Studio5000MCPServer:
     async def get_project_overview(self, acd_path: str) -> Dict[str, Any]:
         """Get comprehensive overview of project structure"""
         return await self.l5x_integration.get_project_overview(acd_path)
-    
+
+    async def find_tag_references(self, tag_name: str, project_name: Optional[str] = None,
+                                   access: Optional[str] = None, include_members: bool = True,
+                                   limit: int = 200) -> Dict[str, Any]:
+        """Exact (non-semantic) cross-reference: every rung/ST line in indexed
+        content that references tag_name, with read/write classification
+        where it can be derived. Complements search_l5x_content's semantic
+        search with guaranteed recall for a specific tag."""
+        return await self.l5x_integration.find_tag_references(
+            tag_name, project_name, access, include_members, limit
+        )
+
+    async def search_tag_references(self, pattern: str, project_name: Optional[str] = None,
+                                     regex: bool = True, limit: int = 50,
+                                     refs_per_symbol: int = 10) -> Dict[str, Any]:
+        """Find indexed tag/member names matching a pattern, and list where
+        each is referenced."""
+        return await self.l5x_integration.search_tag_references(
+            pattern, project_name, regex, limit, refs_per_symbol
+        )
+
     # PDF Drawings Tool Handlers
     async def index_pdf_drawings(self, pdf_file_path: str, force_rebuild: bool = False, 
                                use_vision_ai: bool = False, max_pages: Optional[int] = None) -> Dict[str, Any]:
@@ -2008,7 +2042,25 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                     'acd_path': {'type': 'string', 'description': 'Path to ACD/L5K file'}
                 }
                 required = ['acd_path']
-            
+            elif name == 'find_tag_references':
+                properties = {
+                    'tag_name': {'type': 'string', 'description': 'Exact tag or dotted member reference, e.g. "Motor_1" or "Motor_1.Running". Case-insensitive.'},
+                    'project_name': {'type': 'string', 'description': 'Optional - restrict to one indexed project. Omit to search all.'},
+                    'access': {'type': 'string', 'description': 'Optional filter: "write", "read", or "unknown". Omit for all.'},
+                    'include_members': {'type': 'boolean', 'description': 'Also return member references, e.g. Motor_1.Running when asking for Motor_1 (default: true)'},
+                    'limit': {'type': 'integer', 'description': 'Maximum references to return (default: 200)'}
+                }
+                required = ['tag_name']
+            elif name == 'search_tag_references':
+                properties = {
+                    'pattern': {'type': 'string', 'description': 'Pattern matched against tag/member NAMES, not logic text (e.g. "^Conv3_"). Invalid regex falls back to literal substring match.'},
+                    'project_name': {'type': 'string', 'description': 'Optional - restrict to one indexed project.'},
+                    'regex': {'type': 'boolean', 'description': 'Treat pattern as regex (default: true); false forces literal substring matching'},
+                    'limit': {'type': 'integer', 'description': 'Maximum distinct symbols to return (default: 50)'},
+                    'refs_per_symbol': {'type': 'integer', 'description': 'Maximum references listed per symbol (default: 10)'}
+                }
+                required = ['pattern']
+
             # PDF Drawings Tool Parameters
             elif name == 'index_pdf_drawings':
                 properties = {

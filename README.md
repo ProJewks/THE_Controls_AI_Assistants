@@ -525,6 +525,32 @@ Once configured, these powerful tools will be available in your AI conversations
 
 **Features**: AI-generated logic insertion at optimal positions with existing code analysis
 
+#### Find Tag References (exact match)
+**Tool**: `find_tag_references`
+**Parameters**:
+- `tag_name` (string): Exact tag or dotted member reference, e.g. `Motor_1` or `Motor_1.Running`
+- `project_name` (optional string): Restrict to one indexed project
+- `access` (optional string): Filter by `read`, `write`, or `unknown`
+- `include_members` (optional boolean): Also return member references (default: true)
+
+**Output**: Every indexed rung/ST line referencing the tag, with read/write classification where derivable.
+Complements `search_l5x_content`'s semantic search with guaranteed recall for a specific tag - a regex-based
+symbol index, not a similarity ranking, so it can't rank a genuinely relevant rung below a score threshold.
+Adapted from the tag cross-reference approach in
+[nodeblue-ai/studio5000-mcp-server](https://github.com/nodeblue-ai/studio5000-mcp-server) (MIT License) -
+see `THIRD_PARTY_NOTICES.md` and `src/l5x_analyzer/l5x_xref.py` for what's the same and what's different.
+
+#### Search Tag References (name pattern)
+**Tool**: `search_tag_references`
+**Parameters**:
+- `pattern` (string): Pattern matched against tag/member names (e.g. `^Conv3_`); invalid regex falls back
+  to a literal substring match
+- `project_name` (optional string): Restrict to one indexed project
+- `regex` (optional boolean): Treat pattern as regex (default: true)
+
+**Output**: Matched tag names grouped with their references - "what tags start with X", as opposed to
+`find_tag_references`'s "who references this one exact tag".
+
 ### 📚 **SDK Documentation Search Tools**
 
 #### 14. Search SDK Documentation
@@ -1099,3 +1125,9 @@ The system provides valuable AI assistance for PLC development:
 - Generated code and projects should be validated by qualified personnel before use in production environments
 
 **Disclaimer**: This tool assists with PLC programming but does not replace proper engineering practices, safety analysis, or compliance verification required for industrial automation systems.
+
+**Third-party credit**: the tag cross-reference tools (`find_tag_references`, `search_tag_references`,
+`src/l5x_analyzer/l5x_xref.py`) adapt the symbol-extraction approach from
+[nodeblue-ai/studio5000-mcp-server](https://github.com/nodeblue-ai/studio5000-mcp-server), MIT License,
+Copyright (c) 2026 Nodeblue. See `THIRD_PARTY_NOTICES.md` for the full license text and what was adapted
+versus written independently for this project.

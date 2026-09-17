@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="XrefRoutine" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportDate="Wed Sep 16 11:05:00 2026" ExportOptions="References NoRawData L5KData DecoratedData Context ProductDefinedTypes IOTags Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="XrefProjectB_Controller">
+<DataTypes Use="Context">
+</DataTypes>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram" Class="Standard">
+<Routines Use="Context">
+<Routine Use="Target" Name="XrefRoutine" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment>
+<![CDATA[Same tag name (Motor_1) as XrefProject, different project - used to test project_name scoping]]>
+</Comment>
+<Text>
+<![CDATA[XIC(Motor_1.Running)OTE(ProjectB_Only_Output);]]>
+</Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>
