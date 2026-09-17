@@ -156,9 +156,22 @@ class Studio5000Parser:
             title_elem = soup.find('title')
             title = title_elem.get_text().strip() if title_elem else ""
             
-            # Extract instruction name from title
-            match = re.search(r'([A-Z]{2,}[A-Z0-9]*)', title)
-            instruction_name = match.group(1) if match else ""
+            # Extract instruction name from title. Rockwell's convention is
+            # "Descriptive Name (ABBR)" - e.g. "DINT to String (DTOS)" or
+            # "String to DINT (STOD)". Prefer that parenthesized abbreviation
+            # at the end of the title; fall back to the old "first ALL-CAPS
+            # run anywhere in the title" behavior only when there isn't one.
+            # Without this, any title whose descriptive name itself contains
+            # an all-caps word before its own abbreviation - "DINT to String
+            # (DTOS)" matches "DINT" first, "PID Enhanced (PIDE)" matches
+            # "PID" first - got silently indexed under the wrong name, and the
+            # real instruction (DTOS, STOD, PIDE, ...) was never indexed at all.
+            paren_match = re.search(r'\(([A-Z]{2,}[A-Z0-9]*)\)\s*$', title.strip())
+            if paren_match:
+                instruction_name = paren_match.group(1)
+            else:
+                match = re.search(r'([A-Z]{2,}[A-Z0-9]*)', title)
+                instruction_name = match.group(1) if match else ""
             
             # Extract breadcrumb for category
             breadcrumb = soup.find('p', class_='breadcrumbs')
