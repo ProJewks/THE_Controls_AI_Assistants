@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="SharedRoutineName" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportDate="Wed Sep 02 11:05:00 2026" ExportOptions="References NoRawData L5KData DecoratedData Context ProductDefinedTypes IOTags Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="ProjectA_Controller">
+<DataTypes Use="Context">
+</DataTypes>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram" Class="Standard">
+<Routines Use="Context">
+<Routine Use="Target" Name="SharedRoutineName" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment>
+<![CDATA[ProjectA rung 0 - this is the SMALL two-rung version]]>
+</Comment>
+<Text>
+<![CDATA[XIC(ProjectA_Input)OTE(ProjectA_Output);]]>
+</Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Text>
+<![CDATA[XIC(ProjectA_Input2)OTE(ProjectA_Output2);]]>
+</Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

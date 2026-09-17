@@ -113,8 +113,14 @@ class L5XVectorDatabase:
             logger.error(f"L5X directory not found: {l5x_directory}")
             return False
         
-        # Find all L5X files in directory
-        l5x_files = list(l5x_dir.glob("*.L5X")) + list(l5x_dir.glob("*.l5x"))
+        # Find all L5X files in directory. Deduplicate by resolved path: on
+        # case-insensitive filesystems (Windows, default macOS) glob("*.L5X")
+        # and glob("*.l5x") match the identical file, which previously double-
+        # counted (and double-indexed) every file - every chunk/rung count in
+        # get_project_overview/analyze_routine_structure came out exactly 2x.
+        l5x_files = list({
+            f.resolve() for f in list(l5x_dir.glob("*.L5X")) + list(l5x_dir.glob("*.l5x"))
+        })
         if not l5x_files:
             logger.error(f"No L5X files found in: {l5x_directory}")
             return False
@@ -133,12 +139,19 @@ class L5XVectorDatabase:
             all_chunks.extend(chunks)
         
         logger.info(f"Parsed {len(all_chunks)} chunks from {len(l5x_files)} L5X files")
-        
-        # Build vector database from chunks
-        self.build_vector_database(all_chunks, force_rebuild=True)
-        
-        # Update indexing status
+
+        # Tag every chunk with which project it belongs to, then merge into the
+        # full multi-project chunk store (replacing only this project's own old
+        # chunks, if any) instead of wiping out every other indexed project.
         project_name = l5x_dir.name
+        for chunk in all_chunks:
+            chunk.project_name = project_name
+        merged_chunks = self._merge_project_chunks(project_name, all_chunks)
+
+        # Build vector database from the full merged chunk set
+        self.build_vector_database(merged_chunks, force_rebuild=True)
+
+        # Update indexing status
         self.indexed_projects[project_name] = {
             'path': l5x_directory,
             'indexed_at': time.time(),
@@ -146,9 +159,25 @@ class L5XVectorDatabase:
             'chunk_count': len(all_chunks)
         }
         self._save_metadata()
-        
+
         logger.info(f"✅ Successfully indexed {len(l5x_files)} L5X files with {len(all_chunks)} chunks")
         return True
+
+    def _merge_project_chunks(self, project_name: str, new_chunks: List["L5XChunk"]) -> List["L5XChunk"]:
+        """
+        Merge newly-indexed chunks for one project into the full multi-project
+        chunk store, replacing only that project's own previous chunks (if this
+        is a re-index) and leaving every other project's chunks untouched.
+
+        This is the fix for the chunks_data/indexed_projects mismatch: chunks_data
+        used to be replaced wholesale (self.chunks_data = l5x_chunks) on every
+        index call, silently discarding every other project ever indexed while
+        indexed_projects kept listing them as present.
+        """
+        other_projects_chunks = [
+            c for c in self.chunks_data if getattr(c, 'project_name', None) != project_name
+        ]
+        return other_projects_chunks + new_chunks
 
     async def index_acd_project(self, acd_path: str, routines_to_index: List[str] = None,
                               force_rebuild: bool = False) -> bool:
@@ -202,9 +231,16 @@ class L5XVectorDatabase:
                     )
                     all_chunks.extend(chunks)
             
-            # Build vector database from chunks
-            self.build_vector_database(all_chunks, force_rebuild=True)
-            
+            # Tag every chunk with which project it belongs to, then merge into
+            # the full multi-project chunk store instead of wiping out every
+            # other indexed project (see _merge_project_chunks for why).
+            for chunk in all_chunks:
+                chunk.project_name = project_name
+            merged_chunks = self._merge_project_chunks(project_name, all_chunks)
+
+            # Build vector database from the full merged chunk set
+            self.build_vector_database(merged_chunks, force_rebuild=True)
+
             # Update project indexing status
             self.indexed_projects[project_name] = {
                 'path': acd_path,
@@ -297,23 +333,26 @@ class L5XVectorDatabase:
         logger.info("L5X vector database built and cached successfully")
     
     def search_l5x_content(self, query: str, limit: int = 20, score_threshold: float = 0.1,
-                          chunk_types: List[L5XChunkType] = None) -> List[L5XSearchResult]:
+                          chunk_types: List[L5XChunkType] = None,
+                          project_name: Optional[str] = None) -> List[L5XSearchResult]:
         """
         Search L5X content using vector similarity
-        
+
         Args:
             query: Search query
             limit: Maximum results to return
             score_threshold: Minimum similarity score
             chunk_types: Filter by specific chunk types
-            
+            project_name: Optional - restrict results to one indexed project (see
+                indexed_projects). Omit to search across every indexed project.
+
         Returns:
             List of search results ranked by similarity
         """
         if not self.chunks_data:
             logger.warning("No L5X content has been indexed")
             return []
-        
+
         if not self.model or not self.index:
             logger.warning("Vector search not available, falling back to text search")
             return self._text_search(query, limit, chunk_types)
@@ -323,20 +362,24 @@ class L5XVectorDatabase:
             _ensure_faiss()
             query_embedding = self.model.encode([query])
             faiss.normalize_L2(query_embedding)
-            
+
             # Search the index - get more results initially for better coverage
             search_limit = min(limit * 5, len(self.chunks_data), 1000)  # Search more broadly
             scores, indices = self.index.search(query_embedding.astype(np.float32), search_limit)
-            
+
             results = []
             for score, idx in zip(scores[0], indices[0]):
                 if score >= score_threshold and idx < len(self.chunks_data):
                     chunk = self.chunks_data[idx]
-                    
+
                     # Apply chunk type filter
                     if chunk_types and chunk.chunk_type not in chunk_types:
                         continue
-                    
+
+                    # Apply project scope filter
+                    if project_name and getattr(chunk, 'project_name', None) != project_name:
+                        continue
+
                     result = L5XSearchResult(
                         chunk_id=chunk.id,
                         chunk_type=chunk.chunk_type,
@@ -439,14 +482,43 @@ class L5XVectorDatabase:
         
         return unique_results[:20]  # Limit results
     
-    def get_routine_analysis(self, routine_name: str) -> Dict[str, Any]:
-        """Get comprehensive analysis of a routine"""
-        routine_chunks = [chunk for chunk in self.chunks_data 
-                         if chunk.location.parent_routine == routine_name]
-        
-        if not routine_chunks:
+    def get_routine_analysis(self, routine_name: str, project_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get comprehensive analysis of a routine.
+
+        Args:
+            routine_name: Name of the routine to analyze
+            project_name: Optional - which indexed project to look in (see
+                indexed_projects). If omitted and the routine name exists in more
+                than one indexed project, returns an 'ambiguous' error listing the
+                candidates instead of silently blending their chunks together -
+                routine names are not unique across projects.
+        """
+        candidates = [chunk for chunk in self.chunks_data
+                     if chunk.location.parent_routine == routine_name]
+
+        if not candidates:
             return {'error': f'No data found for routine {routine_name}'}
-        
+
+        if project_name:
+            routine_chunks = [c for c in candidates if getattr(c, 'project_name', None) == project_name]
+            if not routine_chunks:
+                found_in = sorted({getattr(c, 'project_name', None) for c in candidates} - {None})
+                return {
+                    'error': f"No data found for routine {routine_name} in project {project_name}",
+                    'routine_found_in_other_projects': found_in
+                }
+        else:
+            distinct_projects = sorted({getattr(c, 'project_name', None) for c in candidates} - {None})
+            if len(distinct_projects) > 1:
+                return {
+                    'error': f"Routine name '{routine_name}' is ambiguous - it exists in {len(distinct_projects)} indexed projects",
+                    'ambiguous': True,
+                    'candidate_projects': distinct_projects,
+                    'hint': 'Pass project_name to disambiguate.'
+                }
+            routine_chunks = candidates
+
         # Analyze rung distribution
         rung_chunks = [c for c in routine_chunks if c.chunk_type == L5XChunkType.LADDER_RUNG]
         rung_numbers = [c.location.rung_number for c in rung_chunks if c.location.rung_number is not None]

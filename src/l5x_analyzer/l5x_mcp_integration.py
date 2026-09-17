@@ -176,16 +176,19 @@ class L5XSDKMCPIntegration:
             }
     
     async def search_l5x_content(self, query: str, file_filter: str = None,
-                               component_type: str = None, limit: int = 20) -> Dict[str, Any]:
+                               component_type: str = None, project_name: str = None,
+                               limit: int = 20) -> Dict[str, Any]:
         """
         Semantic search within indexed L5X content
-        
+
         Args:
             query: Search query
             file_filter: Filter by project file name
             component_type: Filter by component type (routine, rung, udt, etc.)
+            project_name: Optional - restrict results to one indexed project (see
+                indexed_projects). Omit to search across every indexed project.
             limit: Maximum results to return
-            
+
         Returns:
             Dictionary with search results
         """
@@ -200,10 +203,11 @@ class L5XSDKMCPIntegration:
                         'success': False,
                         'error': f'Invalid component type: {component_type}'
                     }
-            
+
             # Perform search with lower threshold for broader results
             results = self.vector_db.search_l5x_content(
-                query, limit, score_threshold=0.05, chunk_types=chunk_types
+                query, limit, score_threshold=0.05, chunk_types=chunk_types,
+                project_name=project_name
             )
             
             # Filter by file if requested
@@ -586,18 +590,23 @@ class L5XSDKMCPIntegration:
                 'error': f'Extraction failed: {str(e)}'
             }
     
-    async def analyze_routine_structure(self, routine_name: str) -> Dict[str, Any]:
+    async def analyze_routine_structure(self, routine_name: str, acd_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Analyze structure and complexity of an indexed routine
-        
+
         Args:
             routine_name: Name of routine to analyze
-            
+            acd_path: Optional - which indexed project to look in, if the same
+                routine name exists in more than one indexed project. Without
+                this, an ambiguous routine name returns an error listing the
+                candidate projects rather than silently blending/picking one.
+
         Returns:
             Dictionary with analysis results
         """
         try:
-            analysis = self.vector_db.get_routine_analysis(routine_name)
+            project_name = Path(acd_path).stem if acd_path else None
+            analysis = self.vector_db.get_routine_analysis(routine_name, project_name=project_name)
             
             if 'error' in analysis:
                 return {
@@ -692,41 +701,51 @@ class L5XSDKMCPIntegration:
     async def get_project_overview(self, acd_path: str) -> Dict[str, Any]:
         """
         Get project overview from indexed vector database content
-        
+
         Args:
-            acd_path: Path to ACD/L5K file (for context only)
-            
+            acd_path: Path to the ACD/L5K file, or the directory passed to
+                index_exported_l5x_files - its filename/directory stem must match
+                a key in indexed_projects (i.e. this project must actually have
+                been indexed already under this same path).
+
         Returns:
             Dictionary with project overview from indexed data
         """
         try:
             logger.info(f"Getting project overview from vector database for {acd_path}")
-            
+
             # Get overview from vector database indexed projects
             project_name = Path(acd_path).stem
             indexed_projects = self.vector_db.indexed_projects
-            
-            # Check if we have data for this project
+
+            # Check if we have data for this exact project. Previously this fell
+            # back to "use first available indexed project" when the name didn't
+            # match - silently returning a different, unrelated project's data
+            # with no indication a substitution happened. Fail clearly instead.
             if project_name not in indexed_projects:
-                # Try to find any indexed project data
                 if not indexed_projects:
                     return {
                         'success': False,
-                        'error': 'No L5X data indexed. Use index_exported_l5x_files first to analyze project structure.'
+                        'error': 'No L5X data indexed. Use index_acd_project or index_exported_l5x_files first.'
                     }
-                
-                # Use first available indexed project if exact match not found
-                project_name = list(indexed_projects.keys())[0]
-                logger.info(f"Using indexed project data from: {project_name}")
-            
+                return {
+                    'success': False,
+                    'error': f"Project '{project_name}' has not been indexed.",
+                    'indexed_projects': sorted(indexed_projects.keys()),
+                    'hint': 'Call index_acd_project or index_exported_l5x_files with this exact path first, '
+                            'or pass one of the paths already listed in indexed_projects above.'
+                }
+
             project_stats = indexed_projects[project_name]
-            
-            # Get all chunks to analyze structure
+
+            # Get all chunks to analyze structure - scoped to this project only.
+            # Previously unscoped, so this always reflected whatever project was
+            # indexed most recently rather than the one actually requested.
             all_chunks = []
             try:
-                # Search for all content to get structure overview
                 structure_results = self.vector_db.search_l5x_content(
-                    "routine program tag", limit=1000  # Get lots of results for overview
+                    "routine program tag", limit=1000,  # Get lots of results for overview
+                    project_name=project_name
                 )
                 all_chunks = structure_results
             except Exception as e:

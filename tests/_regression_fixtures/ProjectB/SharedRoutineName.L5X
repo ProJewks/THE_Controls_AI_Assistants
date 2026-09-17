@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RSLogix5000Content SchemaRevision="1.0" SoftwareRevision="35.00" TargetName="SharedRoutineName" TargetType="Routine" TargetSubType="RLL" ContainsContext="true" ExportDate="Wed Sep 02 11:05:00 2026" ExportOptions="References NoRawData L5KData DecoratedData Context ProductDefinedTypes IOTags Dependencies ForceProtectedEncoding AllProjDocTrans">
+<Controller Use="Context" Name="ProjectB_Controller">
+<DataTypes Use="Context">
+</DataTypes>
+<Programs Use="Context">
+<Program Use="Context" Name="MainProgram" Class="Standard">
+<Routines Use="Context">
+<Routine Use="Target" Name="SharedRoutineName" Type="RLL">
+<RLLContent>
+<Rung Number="0" Type="N">
+<Comment>
+<![CDATA[ProjectB rung 0 - this is the LARGE five-rung version, deliberately different from ProjectA]]>
+</Comment>
+<Text>
+<![CDATA[XIC(ProjectB_Input)OTE(ProjectB_Output);]]>
+</Text>
+</Rung>
+<Rung Number="1" Type="N">
+<Text>
+<![CDATA[XIC(ProjectB_Input2)OTE(ProjectB_Output2);]]>
+</Text>
+</Rung>
+<Rung Number="2" Type="N">
+<Text>
+<![CDATA[XIC(ProjectB_Input3)OTE(ProjectB_Output3);]]>
+</Text>
+</Rung>
+<Rung Number="3" Type="N">
+<Text>
+<![CDATA[XIC(ProjectB_Input4)OTE(ProjectB_Output4);]]>
+</Text>
+</Rung>
+<Rung Number="4" Type="N">
+<Text>
+<![CDATA[XIC(ProjectB_Input5)OTE(ProjectB_Output5);]]>
+</Text>
+</Rung>
+</RLLContent>
+</Routine>
+</Routines>
+</Program>
+</Programs>
+</Controller>
+</RSLogix5000Content>

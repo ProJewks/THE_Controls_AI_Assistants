@@ -69,7 +69,15 @@ class L5XChunk:
     # SDK-specific information
     sdk_extractable: bool = True    # Can be extracted via SDK
     sdk_modifiable: bool = True     # Can be modified via SDK
-    
+
+    # Project scoping - which indexed project this chunk belongs to (matches the
+    # key used in L5XVectorDatabase.indexed_projects). Added to fix cross-project
+    # contamination: chunks_data used to be replaced wholesale on every index call
+    # while indexed_projects just accumulated entries forever, so a query for an
+    # earlier-indexed project would pass the "is this indexed?" check but silently
+    # search whatever project was indexed most recently instead.
+    project_name: Optional[str] = None
+
     def __post_init__(self):
         if self.dependencies is None:
             self.dependencies = []

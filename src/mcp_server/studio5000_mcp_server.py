@@ -1592,10 +1592,12 @@ class Studio5000MCPServer:
         )
     
     async def search_l5x_content(self, query: str, file_filter: Optional[str] = None,
-                               component_type: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
-        """Semantic search within indexed L5X content"""
+                               component_type: Optional[str] = None, project_name: Optional[str] = None,
+                               limit: int = 20) -> Dict[str, Any]:
+        """Semantic search within indexed L5X content. Pass project_name to restrict
+        results to one indexed project when more than one is indexed."""
         return await self.l5x_integration.search_l5x_content(
-            query, file_filter, component_type, limit
+            query, file_filter, component_type, project_name, limit
         )
     
     async def find_insertion_point(self, new_logic_description: str, target_routine: str,
@@ -1621,9 +1623,10 @@ class Studio5000MCPServer:
             acd_path, routine_name, program_name, output_format
         )
     
-    async def analyze_routine_structure(self, routine_name: str) -> Dict[str, Any]:
-        """Analyze structure and complexity of an indexed routine"""
-        return await self.l5x_integration.analyze_routine_structure(routine_name)
+    async def analyze_routine_structure(self, routine_name: str, acd_path: Optional[str] = None) -> Dict[str, Any]:
+        """Analyze structure and complexity of an indexed routine. Pass acd_path to
+        disambiguate when the same routine name exists in more than one indexed project."""
+        return await self.l5x_integration.analyze_routine_structure(routine_name, acd_path)
     
     async def find_related_components(self, component_name: str, project_filter: Optional[str] = None,
                                     relationship_type: str = "usage") -> Dict[str, Any]:
@@ -1933,6 +1936,7 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                     'query': {'type': 'string', 'description': 'Natural language search query'},
                     'file_filter': {'type': 'string', 'description': 'Optional filter by project file name'},
                     'component_type': {'type': 'string', 'description': 'Optional filter by component type (routine, rung, udt, etc.)'},
+                    'project_name': {'type': 'string', 'description': 'Optional - restrict results to one indexed project (see get_project_overview / indexed_projects). Omit to search across every indexed project.'},
                     'limit': {'type': 'integer', 'description': 'Maximum results to return (default: 20)'}
                 }
                 required = ['query']
@@ -1962,7 +1966,8 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                 required = ['acd_path', 'routine_name']
             elif name == 'analyze_routine_structure':
                 properties = {
-                    'routine_name': {'type': 'string', 'description': 'Name of routine to analyze'}
+                    'routine_name': {'type': 'string', 'description': 'Name of routine to analyze'},
+                    'acd_path': {'type': 'string', 'description': 'Optional - which indexed project to look in, if the same routine name exists in more than one indexed project. Without this, an ambiguous routine name returns an error listing the candidate projects.'}
                 }
                 required = ['routine_name']
             elif name == 'find_related_components':

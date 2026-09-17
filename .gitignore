@@ -64,6 +64,12 @@ src/mcp_server/instruction_index_cache_*.json
 test_*.py
 debug_*.py
 
+# ...but do track our own committed regression tests and their fixtures -
+# these patterns exist to keep generated/scratch test output and generated
+# .ACD/.L5X projects out of git, not the hand-written tests/ suite itself.
+!tests/test_*.py
+!tests/_regression_fixtures/**
+
 # Studio 5000 specific
 *.L5K
 *.RSS
