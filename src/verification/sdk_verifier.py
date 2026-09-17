@@ -41,6 +41,16 @@ COMMON_INSTRUCTIONS = {
     
     # File/Array Instructions
     'COP', 'CPS', 'FLL', 'AVE', 'SRT', 'STD',
+    'FFL', 'FFU', 'LFL', 'LFU', 'FAL', 'FSC', 'BSL', 'BSR',
+
+    # ASCII String Instructions
+    'FIND', 'MID', 'CONCAT', 'INSERT', 'DELETE',
+
+    # ASCII Conversion Instructions
+    'DTOS', 'STOD',
+
+    # Timer/Counter reset (Timer and Counter Instructions category)
+    'RES',
     
     # Program Control
     'JMP', 'LBL', 'JSR', 'RET', 'SBR', 'FOR', 'BRK',
@@ -230,18 +240,18 @@ class SDKVerifier:
     def _validate_ladder_syntax(self, rung: str, rung_number: int) -> List[VerificationError]:
         """Validate basic ladder logic syntax"""
         errors = []
-        
+
         # Check balanced parentheses
         open_parens = rung.count('(')
         close_parens = rung.count(')')
-        
+
         if open_parens != close_parens:
             errors.append(VerificationError(
                 code="UNBALANCED_PARENTHESES",
                 message=f"Unbalanced parentheses in rung {rung_number}: {open_parens} open, {close_parens} close",
                 line_number=rung_number
             ))
-        
+
         # Check for empty instructions (consecutive parentheses)
         if '()' in rung:
             errors.append(VerificationError(
@@ -249,7 +259,7 @@ class SDKVerifier:
                 message=f"Empty instruction parameters in rung {rung_number}",
                 line_number=rung_number
             ))
-        
+
         # Check for proper instruction format
         if rung and not re.search(r'[A-Z]{2,}', rung):
             errors.append(VerificationError(
@@ -257,7 +267,103 @@ class SDKVerifier:
                 message=f"No valid instructions found in rung {rung_number}",
                 line_number=rung_number
             ))
-        
+
+        errors.extend(self._validate_branch_brackets(rung, rung_number))
+
+        return errors
+
+    def _validate_branch_brackets(self, rung: str, rung_number: int) -> List[VerificationError]:
+        """Validate '[...]' parallel-branch constructs in RLL neutral text.
+
+        A '[...]' in RLL text represents a set of parallel (OR'd) branches
+        separated by top-level commas - e.g. '[XIC(A) ,XIC(B)]'. Two defect
+        classes this specifically catches, neither of which was previously
+        detected anywhere in this validator (both found the hard way, via a
+        real Studio 5000 import rejection on logic that had passed this
+        validator with zero errors):
+
+        1. Unbalanced '[' / ']' - never checked before; only '(' / ')' was.
+        2. A bracket with no top-level comma, e.g. '[GEQ(State,30) LEQ(State,40)]'.
+           This is meaningless RLL syntax (a bracket exists to hold
+           comma-separated parallel branches; a single branch is just a
+           plain instruction series and needs no brackets at all) and
+           Studio 5000's importer rejects it outright with a generic
+           "Syntax error found while scanning import file" pointing at the
+           rung - it is NOT caught by the open/close bracket count, since
+           the brackets themselves are perfectly balanced.
+
+        Commas inside an instruction's own parameter list (e.g. the '0' and
+        '1' inside 'EQU(CommandPosition,0)') must not be mistaken for a
+        branch-separator comma - this method tracks '(' / ')' nesting
+        alongside '[' / ']' nesting so only a comma that appears directly
+        inside a bracket (not inside a deeper paren) counts as a branch
+        separator. A '[' is treated as an array index (exempt from the
+        single-branch check) when the immediately preceding character is
+        part of a tag name (alphanumeric, '_', or a closing ']' for chained
+        indexing) rather than the start of a branch expression.
+        """
+        errors = []
+        stack = []  # each entry: {'kind': '[' or '(', 'start': idx, 'has_comma': bool, 'is_array': bool}
+
+        for idx, ch in enumerate(rung):
+            if ch == '[':
+                is_array = idx > 0 and (rung[idx - 1].isalnum() or rung[idx - 1] in ('_', ']'))
+                stack.append({'kind': '[', 'start': idx, 'has_comma': False, 'is_array': is_array})
+            elif ch == '(':
+                stack.append({'kind': '(', 'start': idx, 'has_comma': False, 'is_array': False})
+            elif ch == ',':
+                if stack:
+                    stack[-1]['has_comma'] = True
+            elif ch == ')':
+                if stack and stack[-1]['kind'] == '(':
+                    stack.pop()
+                elif stack:
+                    errors.append(VerificationError(
+                        code="UNBALANCED_BRACKET",
+                        message=f"Unexpected ')' in rung {rung_number} at position {idx} while inside a '[' branch group",
+                        line_number=rung_number,
+                        position=idx
+                    ))
+            elif ch == ']':
+                if stack and stack[-1]['kind'] == '[':
+                    top = stack.pop()
+                    if not top['has_comma'] and not top['is_array']:
+                        snippet = rung[top['start']:idx + 1]
+                        errors.append(VerificationError(
+                            code="SINGLE_BRANCH_BRACKET",
+                            message=(
+                                f"Rung {rung_number}: '[...]' with no top-level comma - "
+                                f"a bracket must hold at least two comma-separated branches "
+                                f"or it isn't valid RLL syntax (Studio 5000 will reject this on "
+                                f"import). Either add a second branch or remove the brackets "
+                                f"entirely: {snippet}"
+                            ),
+                            line_number=rung_number,
+                            position=top['start']
+                        ))
+                elif stack:
+                    errors.append(VerificationError(
+                        code="UNBALANCED_BRACKET",
+                        message=f"Unexpected ']' in rung {rung_number} at position {idx} while inside a '(' parameter list",
+                        line_number=rung_number,
+                        position=idx
+                    ))
+                else:
+                    errors.append(VerificationError(
+                        code="UNBALANCED_BRACKET",
+                        message=f"Unmatched ']' in rung {rung_number} at position {idx} - no corresponding '['",
+                        line_number=rung_number,
+                        position=idx
+                    ))
+
+        unclosed = [s for s in stack if s['kind'] == '[']
+        if unclosed:
+            errors.append(VerificationError(
+                code="UNBALANCED_BRACKET",
+                message=f"Rung {rung_number} has {len(unclosed)} unclosed '[' branch group(s) starting at position(s) {[s['start'] for s in unclosed]}",
+                line_number=rung_number
+            ))
+
         return errors
 
     def _validate_instructions_fast(self, rung: str, rung_number: int) -> List[VerificationError]:
