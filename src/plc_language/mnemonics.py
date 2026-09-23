@@ -56,19 +56,34 @@ CURATED_MNEMONICS: FrozenSet[str] = frozenset({
 
     # Math Instructions
     'ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'SQR', 'SQRT',
-    'NEG', 'ABS', 'MIN', 'MAX', 'LIM', 'MUX',
+    'NEG', 'ABS', 'MIN', 'MAX', 'LIM', 'LIMIT', 'MUX',
 
     # Comparison Instructions
     'EQU', 'NEQ', 'LES', 'LEQ', 'GRT', 'GEQ', 'MEQ',
+    # IEC 61131/PLCopen-style renames Rockwell's Studio 5000 v36+ online help
+    # uses for the instructions above (EQU->EQ, NEQ->NE, LES->LT, LEQ->LE,
+    # GRT->GT, GEQ->GE). Confirmed as a real, not just documentation-only,
+    # rename: re-exporting THD_LG_CP2's SafetyProgram after the V35->V37
+    # upgrade turned the same rung's GRT(...) into GT(...) verbatim. Both
+    # spellings must stay accepted since older reference assets (Breakpack,
+    # InboundSorter, etc.) still use the old ones.
+    'EQ', 'NE', 'LT', 'LE', 'GT', 'GE',
 
     # Logical Instructions
     'AND', 'OR', 'XOR', 'NOT', 'BAND', 'BOR', 'BXOR',
 
     # Move Instructions
     'MOV', 'MVM', 'SWPB', 'CLR',
+    'MOVE',  # v36+ rename of MOV - see comparison-instruction note above
 
     # Convert Instructions
     'TOD', 'FRD', 'DEG', 'RAD',
+    'TO_BCD', 'BCD_TO',  # v36+ renames of TOD/FRD - see comparison-instruction note above
+    'ACS', 'ASN', 'ATN', 'ACOS', 'ASIN', 'ATAN',  # ACS/ASN/ATN and their v36+ renames
+    'TRN', 'TRUNC', 'XPY', 'EXPT',  # TRN/XPY and their v36+ renames
+
+    # Process/Drives Instructions (new in v37)
+    'D2SD', 'D3SD',
 
     # File/Array Instructions
     'COP', 'CPS', 'FLL', 'AVE', 'SRT', 'STD',

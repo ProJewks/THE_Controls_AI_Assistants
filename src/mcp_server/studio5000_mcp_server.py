@@ -552,6 +552,46 @@ class Studio5000MCPServer:
             result['syntax_source_version'] = reference_version
         return result
 
+    def _reference_instruction_result(self, name: str, version: str, kind: str) -> Optional[Dict]:
+        """When `version` has no entry at all for `name` (not just missing
+        syntax - v37's local help doesn't ship the instruction pages at all
+        for instructions unchanged since v36, relying on the online reference
+        instead), fall back to the reference version's full entry per
+        SYNTAX_REFERENCE_VERSION. Tags the result with `syntax_source_version`
+        like _backfill_syntax_from_reference does, so callers can tell it
+        didn't come from `version`'s own documentation. `kind` is 'full' for
+        get_instruction's shape or 'syntax' for get_instruction_syntax's."""
+        reference_version = self.SYNTAX_REFERENCE_VERSION.get(version)
+        if not reference_version or reference_version not in self.instructions_by_version:
+            return None
+        reference_instruction = self.instructions_by_version[reference_version].get(name.upper())
+        if not reference_instruction:
+            return None
+        if kind == 'syntax':
+            result = {
+                'name': reference_instruction.name,
+                'syntax': reference_instruction.syntax,
+                'parameters': reference_instruction.parameters,
+                'languages': reference_instruction.languages,
+                'search_type': 'reference_version_fallback',
+                'doc_version': version,
+            }
+        else:
+            result = {
+                'name': reference_instruction.name,
+                'category': reference_instruction.category,
+                'description': reference_instruction.description,
+                'languages': reference_instruction.languages,
+                'syntax': reference_instruction.syntax,
+                'parameters': reference_instruction.parameters,
+                'examples': reference_instruction.examples,
+                'file_path': reference_instruction.file_path,
+                'search_type': 'reference_version_fallback',
+                'doc_version': version,
+            }
+        result['syntax_source_version'] = reference_version
+        return result
+
     def _initialize_basic(self):
         """Fast basic initialization - only load instruction index, no vector DBs"""
         import sys
@@ -1133,12 +1173,13 @@ class Studio5000MCPServer:
                 if result is not None:
                     result['doc_version'] = version
                     result = self._backfill_syntax_from_reference(result, name, version)
-                return result
+                    return result
+                return self._reference_instruction_result(name, version, 'full')
 
             # Fallback to direct lookup
             instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
-                return None
+                return self._reference_instruction_result(name, version, 'full')
 
             result = {
                 'name': instruction.name,
@@ -1157,7 +1198,7 @@ class Studio5000MCPServer:
             # Fallback to direct lookup
             instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
-                return None
+                return self._reference_instruction_result(name, version, 'full')
 
             result = {
                 'name': instruction.name,
@@ -1265,12 +1306,13 @@ class Studio5000MCPServer:
                 if result is not None:
                     result['doc_version'] = version
                     result = self._backfill_syntax_from_reference(result, name, version)
-                return result
+                    return result
+                return self._reference_instruction_result(name, version, 'syntax')
 
             # Fallback to direct lookup
             instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
-                return None
+                return self._reference_instruction_result(name, version, 'syntax')
 
             result = {
                 'name': instruction.name,
@@ -1285,7 +1327,7 @@ class Studio5000MCPServer:
             # Fallback to direct lookup
             instruction = self.instructions_by_version[version].get(name.upper())
             if not instruction:
-                return None
+                return self._reference_instruction_result(name, version, 'syntax')
 
             result = {
                 'name': instruction.name,
