@@ -25,7 +25,7 @@ DEFAULT_PROTECTED_FILES = "THD_LG_CP2.ACD"
 _REV_RE = re.compile(r"_r(\d{3,})$", re.IGNORECASE)
 # Timestamps use an underscore between date and time: Studio 5000 project names may not contain
 # dashes. The optional "-" is only for recognising files exported before this rule was enforced.
-_TS_RE = re.compile(r"_\d{8}[-_]\d{6}(_r\d{3,})?$")
+_TS_RE = re.compile(r"_\d{8}[-_]\d{6}(_work)?(_r\d{3,})?$")
 _INVALID_CHARS_RE = re.compile(r"[^A-Za-z0-9_]")
 _MULTI_UNDERSCORE_RE = re.compile(r"_{2,}")
 TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
@@ -50,9 +50,10 @@ def is_protected_target(path: Union[str, Path]) -> Optional[str]:
 
 
 def resolve_output_dir(source_path: Union[str, Path], kind: str,
-                       output_dir: Optional[Union[str, Path]] = None) -> Path:
+                       output_dir: Optional[Union[str, Path]] = None, create: bool = True) -> Path:
     """
-    Folder for a new output, created if missing.
+    Folder for a new output, created if missing (unless create=False, used by dry runs so that
+    planning an output never touches the disk).
 
     Default: <source_dir>/<Kind folder>/<SourceStem>/ . An explicit output_dir is used as-is.
     """
@@ -63,7 +64,8 @@ def resolve_output_dir(source_path: Union[str, Path], kind: str,
         out = Path(output_dir)
     else:
         out = _project_root(src) / KIND_FOLDERS[kind] / _base_stem(src.stem)
-    out.mkdir(parents=True, exist_ok=True)
+    if create:
+        out.mkdir(parents=True, exist_ok=True)
     return out
 
 
@@ -164,9 +166,9 @@ def versioned_l5x_path(acd_path: Union[str, Path], output_dir: Optional[Union[st
 
 
 def versioned_acd_path(l5x_path: Union[str, Path], output_dir: Optional[Union[str, Path]] = None,
-                       project_name: Optional[str] = None) -> Path:
+                       project_name: Optional[str] = None, create: bool = True) -> Path:
     src = Path(l5x_path)
-    out = resolve_output_dir(src, "acd", output_dir)
+    out = resolve_output_dir(src, "acd", output_dir, create=create)
     return next_revision_path(out, sanitize_project_name(project_name) if project_name else _base_stem(src.stem), "ACD")
 
 
@@ -176,3 +178,27 @@ def versioned_compare_path(path_a: Union[str, Path], path_b: Union[str, Path], e
     out = resolve_output_dir(a, "compare", output_dir)
     stem = f"{_base_stem(a.stem)}_vs_{_base_stem(b.stem)}"
     return next_timestamped_path(out, stem, ext)
+
+
+# ----------------------------------------------------------------------------- workspace files
+# A workspace is a pair of L5X files in L5X_Exports/<name>/:
+#   <name>_<ts>.L5X        baseline - an untouched export, never edited
+#   <name>_<ts>_work.L5X   working copy - the only file the edit tools are allowed to change
+
+WORK_SUFFIX = "_work"
+
+
+def is_work_file(path: Union[str, Path]) -> bool:
+    return Path(path).stem.lower().endswith(WORK_SUFFIX)
+
+
+def work_path_for_baseline(baseline: Union[str, Path]) -> Path:
+    b = Path(baseline)
+    return b.with_name(b.stem + WORK_SUFFIX + b.suffix)
+
+
+def baseline_for_work(work: Union[str, Path]) -> Path:
+    w = Path(work)
+    if not is_work_file(w):
+        raise ValueError(f"not a working copy (expected a name ending in '{WORK_SUFFIX}'): {w.name}")
+    return w.with_name(w.stem[: -len(WORK_SUFFIX)] + w.suffix)

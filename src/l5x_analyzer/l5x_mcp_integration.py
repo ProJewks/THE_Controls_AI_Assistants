@@ -416,33 +416,20 @@ class L5XSDKMCPIntegration:
             if current_rung.strip():
                 rung_texts.append(current_rung.strip())
             
-            # Renumber existing rungs after insertion point
-            for rung in existing_rungs[insertion_point:]:
-                old_number = int(rung.get('Number', 0))
-                new_number = old_number + len(rung_texts)
-                rung.set('Number', str(new_number))
-            
-            # Create new rung elements and insert them
-            inserted_rungs = 0
-            for i, rung_text in enumerate(rung_texts):
-                new_rung = ET.Element('Rung')
-                new_rung.set('Number', str(insertion_point + i))
-                new_rung.set('Type', 'N')
-                
-                # Add comment
-                comment_elem = ET.SubElement(new_rung, 'Comment')
-                comment_elem.text = f"Generated: {logic_description}"
-                
-                # Add text content
-                text_elem = ET.SubElement(new_rung, 'Text')
-                text_elem.text = rung_text
-                
-                # Insert into RLLContent at correct position
-                rll_content.insert(insertion_point + i, new_rung)
-                inserted_rungs += 1
-            
-            # Save the modified L5X file
-            tree.write(l5x_path, encoding='UTF-8', xml_declaration=True)
+            # Splice the new rungs into the raw file text. Re-saving through ElementTree would
+            # drop every CDATA wrapper in the file and make Logix reject it on import.
+            from .l5x_editor import splice_rungs, L5XEditError
+            raw_text = l5x_path.read_bytes().decode('utf-8')
+            try:
+                new_text, edit_info = splice_rungs(
+                    raw_text, routine_name,
+                    [{'text': t, 'comment': f"Generated: {logic_description}"} for t in rung_texts],
+                    position=insertion_point, program=program_name)
+            except L5XEditError as edit_error:
+                return {'success': False, 'error': f'Could not insert logic: {edit_error}',
+                        'backup_created': str(backup_path)}
+            l5x_path.write_bytes(new_text.encode('utf-8'))
+            inserted_rungs = edit_info['added']
             
             return {
                 'success': True,
@@ -614,6 +601,320 @@ class L5XSDKMCPIntegration:
         except Exception as e:
             logger.error(f"compare_l5x_projects failed: {e}")
             return {'success': False, 'error': f'Comparison failed: {e}'}
+
+    # ------------------------------------------------------------------ staged ACD workflow
+    # open_acd_workspace -> edit_l5x_rungs / add_l5x_tags -> validate_l5x_changes -> commit_l5x_to_acd
+    # No ACD is created until commit_l5x_to_acd is called with confirm=True.
+
+    @staticmethod
+    def _read_l5x(path) -> str:
+        return Path(path).read_bytes().decode('utf-8')  # keep BOM/CRLF/CDATA exactly as they are
+
+    @staticmethod
+    def _write_l5x(path, text: str) -> None:
+        Path(path).write_bytes(text.encode('utf-8'))
+
+    def _work_and_baseline(self, l5x_path: str, baseline_l5x_path: Optional[str] = None):
+        """Validate that l5x_path is a working copy and find its baseline. Returns (work, baseline, error)."""
+        op = self._output_paths()
+        work = Path(l5x_path)
+        if not work.exists():
+            return None, None, {'success': False, 'error': f'File not found: {l5x_path}'}
+        if work.suffix.lower() != '.l5x':
+            return None, None, {'success': False, 'error': f'Expected an .L5X working copy, got: {work.name}'}
+        if not op.is_work_file(work):
+            return None, None, {'success': False,
+                                'error': f'{work.name} is not a working copy. Edit tools only change files ending in '
+                                         f'"_work.L5X" so the baseline export stays untouched.',
+                                'hint': 'Call open_acd_workspace first - it creates the baseline and the working copy.'}
+        baseline = Path(baseline_l5x_path) if baseline_l5x_path else op.baseline_for_work(work)
+        if not baseline.exists():
+            return None, None, {'success': False, 'error': f'Baseline L5X not found: {baseline}',
+                                'hint': 'Pass baseline_l5x_path, or re-open the workspace.'}
+        return work, baseline, None
+
+    def _edit_result(self, work: Path, baseline: Path, info: Dict[str, Any]) -> Dict[str, Any]:
+        """Common tail of the edit tools: quick validation so problems surface immediately."""
+        from .l5x_validate import validate_changes
+        try:
+            report = validate_changes(str(baseline), str(work))
+        except Exception as e:  # never let a reporting problem hide a successful edit
+            report = {'ok': None, 'summary': f'validation could not run: {e}'}
+        result = {'success': True, 'working_copy': str(work), 'edit': info,
+                  'validation': {k: report.get(k) for k in ('ok', 'summary', 'introduced_errors', 'warnings')},
+                  'note': 'Working copy changed. No ACD has been created.'}
+        if report.get('introduced_errors'):
+            result['warning'] = 'This edit introduced validation errors - fix them before committing.'
+        return result
+
+    async def open_acd_workspace(self, source_path: str, output_dir: Optional[str] = None,
+                                 detailed_l5x: bool = False) -> Dict[str, Any]:
+        """
+        Stage 1. Turn an ACD (or an L5X) into an editable workspace - no ACD is created.
+
+        Creates, in <source folder>/L5X_Exports/<name>/:
+          <name>_<ts>.L5X        baseline export - never edited, used to validate and diff
+          <name>_<ts>_work.L5X   working copy    - the only file the edit tools will change
+        """
+        import shutil
+        try:
+            op = self._output_paths()
+            src = Path(source_path)
+            if not src.exists():
+                return {'success': False, 'error': f'File not found: {source_path}'}
+            ext = src.suffix.lower()
+            if ext == '.acd':
+                exp = await self.export_acd_to_l5x(str(src), output_dir, detailed_l5x)
+                if not exp.get('success'):
+                    return exp
+                baseline = Path(exp['output'])
+                origin = 'exported from the ACD'
+            elif ext == '.l5x':
+                if op.is_work_file(src):
+                    return {'success': False, 'error': f'{src.name} is already a working copy.'}
+                in_workspace = (src.parent.parent.name == op.KIND_FOLDERS['l5x'] and op._TS_RE.search(src.stem))
+                if in_workspace and not output_dir:
+                    baseline, origin = src, 'existing export used as the baseline'
+                else:
+                    baseline = op.versioned_l5x_path(src, output_dir)
+                    shutil.copyfile(src, baseline)
+                    origin = 'copied from the L5X'
+            else:
+                return {'success': False, 'error': f'Expected an .ACD or .L5X file, got: {src.name}'}
+
+            work = op.work_path_for_baseline(baseline)
+            if work.exists():
+                return {'success': False, 'error': f'Working copy already exists: {work}'}
+            shutil.copyfile(baseline, work)
+            return {
+                'success': True,
+                'source': str(src),
+                'baseline_l5x': str(baseline),
+                'working_l5x': str(work),
+                'origin': origin,
+                'overview': self._workspace_overview(baseline),
+                'next_steps': ['Read/analyse the baseline or working L5X as needed.',
+                               'Edit only the working copy: edit_l5x_rungs / add_l5x_tags.',
+                               'validate_l5x_changes to review the diff and checks (no ACD is created).',
+                               'commit_l5x_to_acd (dry run first, then confirm=true) creates the new ACD revision.'],
+            }
+        except Exception as e:
+            logger.error(f"open_acd_workspace failed: {e}")
+            return {'success': False, 'error': f'Could not open workspace: {e}'}
+
+    @staticmethod
+    def _workspace_overview(l5x: Path) -> Dict[str, Any]:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(Path(l5x).read_bytes().lstrip(b'\xef\xbb\xbf'))
+        c = root.find('Controller')
+        programs = {}
+        for prog in c.findall('Programs/Program'):
+            programs[prog.get('Name')] = [
+                {'routine': r.get('Name'), 'type': r.get('Type', 'RLL'),
+                 'rungs': len(r.findall('RLLContent/Rung')) if r.get('Type', 'RLL') == 'RLL' else None}
+                for r in prog.findall('Routines/Routine')]
+        return {
+            'controller': c.get('Name'), 'processor': c.get('ProcessorType'),
+            'revision': f"{c.get('MajorRev')}.{c.get('MinorRev')}",
+            'controller_tags': len(c.findall('Tags/Tag')),
+            'modules': len(c.findall('Modules/Module')),
+            'data_types': len(c.findall('DataTypes/DataType')),
+            'add_on_instructions': [a.get('Name') for a in c.findall('AddOnInstructionDefinitions/AddOnInstructionDefinition')],
+            'programs': programs,
+        }
+
+    async def edit_l5x_rungs(self, l5x_path: str, routine_name: str, operation: str,
+                             program_name: str = "MainProgram", position: Optional[int] = None,
+                             rungs: Optional[List[Dict[str, Any]]] = None, count: Optional[int] = None,
+                             aoi_name: Optional[str] = None,
+                             baseline_l5x_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Stage 2. Insert, replace or delete ladder rungs in a WORKING COPY (byte-preserving).
+
+        operation: 'insert' (rungs at position, default end), 'replace' (count existing rungs at
+        position, default len(rungs), are replaced by rungs) or 'delete' (count rungs, default 1, at position).
+        rungs: [{'text': 'XIC(a)OTE(b);', 'comment': 'optional'}]. Rung numbers after the edit are renumbered.
+        Only the working copy changes - never the baseline, never an ACD.
+        """
+        from .l5x_editor import splice_rungs, list_rungs, L5XEditError
+        import xml.etree.ElementTree as ET
+        try:
+            work, baseline, err = self._work_and_baseline(l5x_path, baseline_l5x_path)
+            if err:
+                return err
+            op = (operation or '').lower()
+            rungs = rungs or []
+            if op not in ('insert', 'replace', 'delete'):
+                return {'success': False, 'error': "operation must be 'insert', 'replace' or 'delete'"}
+            if op in ('insert', 'replace') and not rungs:
+                return {'success': False, 'error': f"'{op}' needs at least one rung in 'rungs'"}
+            if op in ('replace', 'delete') and position is None:
+                return {'success': False, 'error': f"'{op}' needs a 'position'"}
+            remove = 0 if op == 'insert' else (count if count is not None else (len(rungs) if op == 'replace' else 1))
+            if op == 'delete':
+                rungs = []
+            text = self._read_l5x(work)
+            try:
+                new_text, info = splice_rungs(text, routine_name, rungs, position=position, remove_count=remove,
+                                              program=program_name, aoi=aoi_name)
+                ET.fromstring(new_text.encode('utf-8').lstrip(b'\xef\xbb\xbf'))  # refuse to write broken XML
+            except L5XEditError as e:
+                return {'success': False, 'error': str(e)}
+            except ET.ParseError as e:
+                return {'success': False, 'error': f'Edit would produce invalid XML ({e}); nothing was written.'}
+            self._write_l5x(work, new_text)
+            after = list_rungs(new_text, routine_name, program_name, aoi_name)
+            lo = max(0, info['position'] - 1)
+            info['rungs_around_edit'] = [{'number': r['number'], 'text': r['text'][:160], 'comment': r['comment']}
+                                         for r in after[lo: info['position'] + info['added'] + 1]]
+            return self._edit_result(work, baseline, info)
+        except Exception as e:
+            logger.error(f"edit_l5x_rungs failed: {e}")
+            return {'success': False, 'error': f'Edit failed: {e}'}
+
+    async def add_l5x_tags(self, l5x_path: str, tags: List[Dict[str, Any]], program_name: Optional[str] = None,
+                           baseline_l5x_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Stage 2. Add simple tags to a WORKING COPY (controller scope, or program scope with program_name).
+
+        tags: [{'name': 'Pulse_Count', 'data_type': 'DINT', 'initial_value': 0, 'description': '...', 'preset': 0}]
+        Supported types: BOOL, SINT, INT, DINT, REAL, TIMER, COUNTER (preset for TIMER/COUNTER).
+        UDT, AOI, string and array tags must be created in Studio 5000.
+        """
+        from .l5x_editor import add_tags, L5XEditError
+        import xml.etree.ElementTree as ET
+        try:
+            work, baseline, err = self._work_and_baseline(l5x_path, baseline_l5x_path)
+            if err:
+                return err
+            text = self._read_l5x(work)
+            try:
+                new_text, info = add_tags(text, tags, program=program_name)
+                ET.fromstring(new_text.encode('utf-8').lstrip(b'\xef\xbb\xbf'))
+            except L5XEditError as e:
+                return {'success': False, 'error': str(e)}
+            except ET.ParseError as e:
+                return {'success': False, 'error': f'Edit would produce invalid XML ({e}); nothing was written.'}
+            self._write_l5x(work, new_text)
+            return self._edit_result(work, baseline, info)
+        except Exception as e:
+            logger.error(f"add_l5x_tags failed: {e}")
+            return {'success': False, 'error': f'Edit failed: {e}'}
+
+    async def validate_l5x_changes(self, l5x_path: str, baseline_l5x_path: Optional[str] = None,
+                                   include_diff: bool = True) -> Dict[str, Any]:
+        """
+        Stage 3. Check a working copy against its baseline and show what changed. Creates no ACD.
+
+        Reports errors the edits introduced (these block a commit), problems already in the baseline,
+        warnings (e.g. tags that aren't defined), and a routine/tag/module diff.
+        """
+        from .l5x_validate import validate_changes
+        from .l5x_compare import compare_l5x_files, render_markdown
+        try:
+            work, baseline, err = self._work_and_baseline(l5x_path, baseline_l5x_path)
+            if err:
+                return err
+            report = validate_changes(str(baseline), str(work))
+            result = {'success': True, 'ready_to_commit': bool(report['ok']), 'validation': report}
+            if include_diff:
+                diff = compare_l5x_files(str(baseline), str(work))
+                result['diff_summary'] = diff['summary']
+                result['diff_markdown'] = render_markdown(diff, 'baseline', 'working copy')
+            result['note'] = 'Nothing was written and no ACD was created.'
+            return result
+        except Exception as e:
+            logger.error(f"validate_l5x_changes failed: {e}")
+            return {'success': False, 'error': f'Validation failed: {e}'}
+
+    async def commit_l5x_to_acd(self, l5x_path: str, baseline_l5x_path: Optional[str] = None,
+                                confirm: bool = False, project_name: Optional[str] = None,
+                                verify: bool = True) -> Dict[str, Any]:
+        """
+        Stage 4. Create the new ACD revision from a validated working copy.
+
+        confirm=False (default) is a dry run: validates, shows the diff and the ACD that WOULD be
+        created, and writes nothing. confirm=True creates <name>_rNNN.ACD under ACD_Revisions/ and,
+        with verify=True, re-exports it and checks it matches the working copy.
+        """
+        import shutil
+        import tempfile
+        from .l5x_validate import validate_changes
+        from .l5x_compare import compare_l5x_files
+        try:
+            work, baseline, err = self._work_and_baseline(l5x_path, baseline_l5x_path)
+            if err:
+                return err
+            op = self._output_paths()
+            if project_name:
+                problems = op.project_name_problems(project_name)
+                if problems:
+                    return {'success': False, 'error': f'project_name {project_name!r} is not a valid Studio 5000 '
+                            'project name: ' + '; '.join(problems), 'suggested_name': op.sanitize_project_name(project_name)}
+
+            report = validate_changes(str(baseline), str(work))
+            if not report['ok']:
+                return {'success': False, 'blocked': True,
+                        'error': 'Validation found errors introduced by the edits; no ACD was created.',
+                        'validation': report}
+            diff = compare_l5x_files(str(baseline), str(work))
+            dest = op.versioned_acd_path(work, None, project_name, create=False)
+            if not confirm:
+                return {'success': True, 'dry_run': True, 'would_create': str(dest),
+                        'validation': {k: report[k] for k in ('summary', 'warnings', 'preexisting_errors')},
+                        'diff_summary': diff['summary'],
+                        'message': 'Dry run - no ACD was created. Review the diff, then call again with confirm=true.'}
+
+            result = await self.import_l5x_to_acd(str(work), project_name=project_name)
+            if not result.get('success'):
+                result['validation'] = {k: report[k] for k in ('summary', 'warnings')}
+                return result
+            result['validation'] = {k: report[k] for k in ('summary', 'warnings', 'preexisting_errors')}
+            result['diff_summary'] = diff['summary']
+            if verify:
+                result['verification'] = await self._verify_acd_matches(result['output'], work)
+            return result
+        except Exception as e:
+            logger.error(f"commit_l5x_to_acd failed: {e}")
+            return {'success': False, 'error': f'Commit failed: {e}'}
+
+    async def _verify_acd_matches(self, acd_path: str, l5x_path) -> Dict[str, Any]:
+        """Re-export the new ACD and compare it with the L5X it was built from."""
+        import shutil
+        import tempfile
+        from .l5x_compare import compare_l5x_files
+        tmp = Path(tempfile.mkdtemp(prefix='acd_verify_'))
+        try:
+            analyzer = self.vector_db.sdk_analyzer or SDKPoweredL5XAnalyzer()
+            exp = await analyzer.convert_project(acd_path, str(tmp / 'verify.L5X'))
+            if not exp.get('success'):
+                return {'verified': False, 'error': f"could not re-export the new ACD to verify it: {exp.get('error')}"}
+            d = compare_l5x_files(str(l5x_path), str(tmp / 'verify.L5X'))
+            issues = []
+            for key in ('datatypes', 'aois', 'tasks', 'controller_tags'):
+                c = d[key]
+                if c['only_in_a'] or c['only_in_b'] or c['changed']:
+                    issues.append({'section': key, 'only_in_working_copy': c['only_in_a'],
+                                   'only_in_new_acd': c['only_in_b'], 'changed': [x['name'] for x in c['changed']]})
+            for pname, p in d['programs']['programs'].items():
+                if p['routines_changed'] or p['routines_only_in_a'] or p['routines_only_in_b']:
+                    issues.append({'section': f'program {pname}', 'routines_changed': list(p['routines_changed']),
+                                   'only_in_working_copy': p['routines_only_in_a'], 'only_in_new_acd': p['routines_only_in_b']})
+            module_notes = [c['name'] for c in d['modules']['changed']
+                            if all('<public>' in line for line in c['diff'])]
+            module_issues = [c['name'] for c in d['modules']['changed'] if c['name'] not in module_notes]
+            if module_issues or d['modules']['only_in_a'] or d['modules']['only_in_b']:
+                issues.append({'section': 'modules', 'changed': module_issues,
+                               'only_in_working_copy': d['modules']['only_in_a'], 'only_in_new_acd': d['modules']['only_in_b']})
+            return {'verified': not issues, 'differences': issues,
+                    'benign_notes': ([f"{len(module_notes)} module(s) gained EDS-derived vendor metadata on import (harmless)"]
+                                     if module_notes else []),
+                    'message': ('The new ACD matches the working copy.' if not issues
+                                else 'The new ACD differs from the working copy - review before using it.')}
+        except Exception as e:
+            return {'verified': False, 'error': f'verification failed: {e}'}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     async def extract_routine_content(self, acd_path: str, routine_name: str,
                                     program_name: str = "MainProgram", 

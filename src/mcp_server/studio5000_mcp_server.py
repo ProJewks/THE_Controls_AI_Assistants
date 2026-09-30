@@ -948,6 +948,36 @@ class Studio5000MCPServer:
         )
 
         self.server.add_tool(
+            "open_acd_workspace",
+            "STAGE 1 of the ACD workflow: export an ACD (or L5X) to a baseline L5X plus an editable working copy. Creates no ACD.",
+            self.open_acd_workspace
+        )
+
+        self.server.add_tool(
+            "edit_l5x_rungs",
+            "STAGE 2: insert/replace/delete ladder rungs in a working-copy L5X (byte-preserving, baseline and ACD untouched)",
+            self.edit_l5x_rungs
+        )
+
+        self.server.add_tool(
+            "add_l5x_tags",
+            "STAGE 2: add simple tags (BOOL/SINT/INT/DINT/REAL/TIMER/COUNTER) to a working-copy L5X",
+            self.add_l5x_tags
+        )
+
+        self.server.add_tool(
+            "validate_l5x_changes",
+            "STAGE 3: check a working copy against its baseline (CDATA, rung syntax, AOI operands, tags) and show the diff. Creates no ACD.",
+            self.validate_l5x_changes
+        )
+
+        self.server.add_tool(
+            "commit_l5x_to_acd",
+            "STAGE 4: create the new ACD revision from a validated working copy. Dry run unless confirm=true; verifies the result by re-exporting it.",
+            self.commit_l5x_to_acd
+        )
+
+        self.server.add_tool(
             "search_l5x_content",
             "Semantic search within indexed L5X content",
             self.search_l5x_content
@@ -1705,6 +1735,37 @@ class Studio5000MCPServer:
         """Compare two projects (.L5X or .ACD) and report differences"""
         return await self.l5x_integration.compare_l5x_projects(path_a, path_b, write_report, include_details)
 
+    async def open_acd_workspace(self, source_path: str, output_dir: Optional[str] = None,
+                                detailed_l5x: bool = False) -> Dict[str, Any]:
+        """Stage 1: ACD/L5X -> baseline + working copy L5X (no ACD created)"""
+        return await self.l5x_integration.open_acd_workspace(source_path, output_dir, detailed_l5x)
+
+    async def edit_l5x_rungs(self, l5x_path: str, routine_name: str, operation: str,
+                            program_name: str = "MainProgram", position: Optional[int] = None,
+                            rungs: Optional[List[Dict[str, Any]]] = None, count: Optional[int] = None,
+                            aoi_name: Optional[str] = None,
+                            baseline_l5x_path: Optional[str] = None) -> Dict[str, Any]:
+        """Stage 2: insert/replace/delete rungs in a working copy"""
+        return await self.l5x_integration.edit_l5x_rungs(
+            l5x_path, routine_name, operation, program_name, position, rungs, count, aoi_name, baseline_l5x_path)
+
+    async def add_l5x_tags(self, l5x_path: str, tags: List[Dict[str, Any]],
+                          program_name: Optional[str] = None,
+                          baseline_l5x_path: Optional[str] = None) -> Dict[str, Any]:
+        """Stage 2: add simple tags to a working copy"""
+        return await self.l5x_integration.add_l5x_tags(l5x_path, tags, program_name, baseline_l5x_path)
+
+    async def validate_l5x_changes(self, l5x_path: str, baseline_l5x_path: Optional[str] = None,
+                                  include_diff: bool = True) -> Dict[str, Any]:
+        """Stage 3: validate a working copy against its baseline"""
+        return await self.l5x_integration.validate_l5x_changes(l5x_path, baseline_l5x_path, include_diff)
+
+    async def commit_l5x_to_acd(self, l5x_path: str, baseline_l5x_path: Optional[str] = None,
+                               confirm: bool = False, project_name: Optional[str] = None,
+                               verify: bool = True) -> Dict[str, Any]:
+        """Stage 4: create the new ACD revision (dry run unless confirm=true)"""
+        return await self.l5x_integration.commit_l5x_to_acd(l5x_path, baseline_l5x_path, confirm, project_name, verify)
+
     async def search_l5x_content(self, query: str, file_filter: Optional[str] = None,
                                component_type: Optional[str] = None, project_name: Optional[str] = None,
                                limit: int = 20) -> Dict[str, Any]:
@@ -2088,6 +2149,50 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                     'include_details': {'type': 'boolean', 'description': 'Also return the full structured diff (default: false - summary and markdown only)'}
                 }
                 required = ['path_a', 'path_b']
+            elif name == 'open_acd_workspace':
+                properties = {
+                    'source_path': {'type': 'string', 'description': 'An .ACD (exported via the Logix Designer SDK, read-only) or an .L5X file'},
+                    'output_dir': {'type': 'string', 'description': 'Optional folder for the workspace. Default: <source folder>/L5X_Exports/<name>/ (created if missing).'},
+                    'detailed_l5x': {'type': 'boolean', 'description': 'Include detailed L5X when exporting an ACD (default: false)'}
+                }
+                required = ['source_path']
+            elif name == 'edit_l5x_rungs':
+                properties = {
+                    'l5x_path': {'type': 'string', 'description': 'The WORKING COPY (<name>_work.L5X) from open_acd_workspace. Other files are refused.'},
+                    'routine_name': {'type': 'string', 'description': 'Ladder (RLL) routine to edit'},
+                    'operation': {'type': 'string', 'description': "'insert', 'replace' or 'delete'"},
+                    'program_name': {'type': 'string', 'description': 'Program containing the routine (default: MainProgram). Ignored when aoi_name is given.'},
+                    'position': {'type': 'integer', 'description': 'Rung number to insert before / start replacing / start deleting at. Insert: omit to append at the end.'},
+                    'rungs': {'type': 'array', 'description': "Rungs to insert/replace: [{'text': 'XIC(a)OTE(b);', 'comment': 'optional'}]. Text must end with ';' and have balanced brackets."},
+                    'count': {'type': 'integer', 'description': 'Existing rungs removed: replace defaults to len(rungs), delete defaults to 1'},
+                    'aoi_name': {'type': 'string', 'description': 'Edit the Logic routine of this Add-On Instruction instead of a program routine'},
+                    'baseline_l5x_path': {'type': 'string', 'description': 'Optional explicit baseline (default: the working copy name without _work)'}
+                }
+                required = ['l5x_path', 'routine_name', 'operation']
+            elif name == 'add_l5x_tags':
+                properties = {
+                    'l5x_path': {'type': 'string', 'description': 'The WORKING COPY (<name>_work.L5X) from open_acd_workspace'},
+                    'tags': {'type': 'array', 'description': "[{'name': 'Pulse_Count', 'data_type': 'DINT', 'initial_value': 0, 'description': 'optional', 'preset': 0}]. Types: BOOL, SINT, INT, DINT, REAL, TIMER, COUNTER."},
+                    'program_name': {'type': 'string', 'description': 'Add program-scoped tags to this program (default: controller scope)'},
+                    'baseline_l5x_path': {'type': 'string', 'description': 'Optional explicit baseline'}
+                }
+                required = ['l5x_path', 'tags']
+            elif name == 'validate_l5x_changes':
+                properties = {
+                    'l5x_path': {'type': 'string', 'description': 'The WORKING COPY (<name>_work.L5X)'},
+                    'baseline_l5x_path': {'type': 'string', 'description': 'Optional explicit baseline (default: the working copy name without _work)'},
+                    'include_diff': {'type': 'boolean', 'description': 'Include the markdown routine/tag/module diff (default: true)'}
+                }
+                required = ['l5x_path']
+            elif name == 'commit_l5x_to_acd':
+                properties = {
+                    'l5x_path': {'type': 'string', 'description': 'The WORKING COPY (<name>_work.L5X) to turn into an ACD'},
+                    'baseline_l5x_path': {'type': 'string', 'description': 'Optional explicit baseline'},
+                    'confirm': {'type': 'boolean', 'description': 'false (default) = dry run: validate, show the diff and the ACD that would be created, write nothing. true = create <name>_rNNN.ACD under ACD_Revisions/. Only pass true when the user has asked for the ACD.'},
+                    'project_name': {'type': 'string', 'description': 'Optional base name for the ACD: no leading digit, no spaces/special characters, no consecutive underscores'},
+                    'verify': {'type': 'boolean', 'description': 'After creating the ACD, re-export it and compare with the working copy (default: true)'}
+                }
+                required = ['l5x_path']
             elif name == 'search_l5x_content':
                 properties = {
                     'query': {'type': 'string', 'description': 'Natural language search query'},

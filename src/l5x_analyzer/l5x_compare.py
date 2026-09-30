@@ -53,6 +53,11 @@ def _scrub(elem: ET.Element, drop_live_data: bool, drop_tag_data: bool) -> ET.El
     for node in e.iter():
         for a in NOISE_ATTRS:
             node.attrib.pop(a, None)
+        # <Dependencies> is export metadata derived from the definition itself (the SDK writes it, a
+        # Studio export may not) - it is not project content, so it must not show up as a difference.
+        for child in list(node):
+            if child.tag == "Dependencies":
+                node.remove(child)
     if drop_tag_data:  # tag values: <Data> / <Data Format=...> children of a Tag
         for node in e.iter():
             for child in list(node):
