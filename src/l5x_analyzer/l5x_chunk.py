@@ -164,7 +164,7 @@ def create_ladder_rung_chunk(routine_name: str, program_name: str, rung_number: 
     dependencies = extract_tags_from_ladder_logic(rung_content)
     
     return L5XChunk(
-        id=f"{routine_name}_rung_{rung_number}",
+        id=f"{program_name}_{routine_name}_rung_{rung_number}",
         chunk_type=L5XChunkType.LADDER_RUNG,
         name=f"Rung {rung_number}",
         content=rung_content,

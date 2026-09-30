@@ -618,31 +618,27 @@ class L5XSDKMCPIntegration:
         try:
             logger.info(f"Extracting routine content for {routine_name} using vector database")
             
-            # Search for the specific routine in the vector database
-            routine_query = f"routine {routine_name}"
+            # Exact lookup straight from the chunk store - NOT a semantic search. A search
+            # returns only the top-N ranked chunks across the whole project, which silently
+            # dropped rungs of long routines; this returns every rung that was indexed.
             project_name = Path(acd_path).stem if acd_path else None
             scope = project_name if project_name in self.vector_db.indexed_projects else None
-            search_results = self.vector_db.search_l5x_content(
-                routine_query, limit=50, 
-                chunk_types=[L5XChunkType.ROUTINE, L5XChunkType.LADDER_RUNG],
-                project_name=scope
-            )
-            
-            # Filter results to exact routine match
+
             routine_chunks = []
             rung_chunks = []
-            
-            for result in search_results:
-                # Check if this is the exact routine we want (in the requested program)
-                if result.location.parent_program and result.location.parent_program != program_name:
+
+            for chunk in self.vector_db.chunks_data:
+                if chunk.chunk_type not in (L5XChunkType.ROUTINE, L5XChunkType.LADDER_RUNG):
                     continue
-                if (result.location.parent_routine == routine_name or 
-                    result.name == routine_name):
-                    
-                    if result.chunk_type == L5XChunkType.ROUTINE:
-                        routine_chunks.append(result)
-                    elif result.chunk_type == L5XChunkType.LADDER_RUNG:
-                        rung_chunks.append(result)
+                if scope is not None and getattr(chunk, 'project_name', None) != scope:
+                    continue
+                loc = chunk.location
+                if loc is None or (loc.parent_program and loc.parent_program != program_name):
+                    continue
+                if chunk.chunk_type == L5XChunkType.ROUTINE and chunk.name == routine_name:
+                    routine_chunks.append(chunk)
+                elif chunk.chunk_type == L5XChunkType.LADDER_RUNG and loc.parent_routine == routine_name:
+                    rung_chunks.append(chunk)
             
             if not routine_chunks and not rung_chunks:
                 return {
@@ -655,7 +651,7 @@ class L5XSDKMCPIntegration:
             if scope is None:
                 # acd_path didn't match an indexed project, so results came from everywhere -
                 # refuse to silently blend several projects' copies of the same routine.
-                found_in = sorted({r.project_name for r in routine_chunks + rung_chunks} - {None})
+                found_in = sorted({getattr(r, 'project_name', None) for r in routine_chunks + rung_chunks} - {None})
                 if len(found_in) > 1:
                     return {
                         'success': False,
@@ -676,7 +672,7 @@ class L5XSDKMCPIntegration:
                     'program_name': program_name,
                     'rung_count': len(rung_chunks),
                     'description': routine_chunks[0].description if routine_chunks else 'No description available',
-                    'dependencies': list(set().union(*[result.dependencies for result in routine_chunks + rung_chunks if hasattr(result, 'dependencies')])),
+                    'dependencies': sorted(set().union(*[set(c.dependencies or []) for c in routine_chunks + rung_chunks])),
                     'complexity_info': {
                         'total_rungs': len(rung_chunks),
                         'has_routine_metadata': len(routine_chunks) > 0
@@ -692,7 +688,6 @@ class L5XSDKMCPIntegration:
                         'rung_number': result.location.rung_number,
                         'logic': result.content,
                         'comment': result.description,
-                        'score': result.score,
                         'file_path': result.location.file_path
                     })
                 
@@ -709,12 +704,11 @@ class L5XSDKMCPIntegration:
                 
                 for result in all_chunks:
                     chunks_data.append({
-                        'id': result.chunk_id,
+                        'id': result.id,
                         'type': result.chunk_type.value,
                         'name': result.name,
                         'content': result.content,
                         'description': result.description,
-                        'score': result.score,
                         'location': {
                             'file_path': result.location.file_path,
                             'xpath': result.location.xpath,
