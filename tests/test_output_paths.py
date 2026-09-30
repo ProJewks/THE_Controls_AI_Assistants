@@ -52,7 +52,7 @@ def main():
             check("unknown kind raises", True)
 
         print("\n=== ACD revisions increment and never reuse a name ===")
-        l5x = tmp / "Job" / "MyProject_20260930-121500.L5X"
+        l5x = tmp / "Job" / "MyProject_20260930_121500.L5X"
         l5x.write_text("<x/>")
         p1 = op.versioned_acd_path(l5x)
         check(f"first revision is _r001 (got {p1.name})", p1.name == "MyProject_r001.ACD")
@@ -71,18 +71,49 @@ def main():
         print("\n=== timestamped L5X names never collide ===")
         fixed = datetime(2026, 9, 30, 12, 15, 0)
         t1 = op.next_timestamped_path(out, "MyProject", "L5X", now=fixed)
-        check(f"timestamp name (got {t1.name})", t1.name == "MyProject_20260930-121500.L5X")
+        check(f"timestamp name (got {t1.name})", t1.name == "MyProject_20260930_121500.L5X")
         t1.write_text("a")
         t2 = op.next_timestamped_path(out, "MyProject", "L5X", now=fixed)
         check(f"same-second collision gets an _rNNN suffix (got {t2.name})",
-              t2.name == "MyProject_20260930-121500_r002.L5X" and not t2.exists())
+              t2.name == "MyProject_20260930_121500_r002.L5X" and not t2.exists())
         v = op.versioned_l5x_path(acd)
         check("versioned_l5x_path returns a path that does not exist", not v.exists() and v.parent == out)
 
         print("\n=== compare report names ===")
         c = op.versioned_compare_path(acd, tmp / "Job" / "Other.ACD", "md")
         check(f"compare name contains both stems (got {c.name})",
-              c.name.startswith("MyProject__vs__Other_") and c.suffix == ".md")
+              c.name.startswith("MyProject_vs_Other_") and c.suffix == ".md")
+
+        print("\n=== Studio 5000 project-name rules (no leading digit/spaces/special chars/double underscores) ===")
+        check("valid name has no problems", op.project_name_problems("THD_Lacey_CP1") == [])
+        for bad, why in (("1Sorter", "number"), ("My Project", "space"), ("A-B", "special"), ("A.B", "special"),
+                         ("A#B", "special"), ("A@B", "special"), ("A$B", "special"),
+                         ("A__B", "consecutive"), ("Sorter_", "underscore"), ("", "empty")):
+            check(f"{bad!r} is rejected ({why})", any(why in p for p in op.project_name_problems(bad)))
+        for raw in ("1Sorter", "My Project", "A-B", "A.B", "A#B", "A__B", "Sorter_", "Bad@na$me", "  ", "THD_Lacey_CP1"):
+            check(f"sanitize_project_name({raw!r}) -> valid name ({op.sanitize_project_name(raw)!r})",
+                  op.project_name_problems(op.sanitize_project_name(raw)) == [])
+
+        print("\n=== every generated file name obeys the rules (the old timestamps used a dash) ===")
+        awkward = tmp / "Job" / "My Project-v2 #1 (copy).ACD"
+        awkward.write_bytes(b"x")
+        gen_l5x = op.versioned_l5x_path(awkward)
+        check(f"L5X export from an awkward ACD name is compliant (got {gen_l5x.name})",
+              op.project_name_problems(gen_l5x.stem) == [])
+        gen_l5x.write_text("<x/>")
+        gen_acd = op.versioned_acd_path(gen_l5x)
+        check(f"ACD revision from that L5X is compliant (got {gen_acd.name})",
+              op.project_name_problems(gen_acd.stem) == [])
+        check(f"ACD revision still ends in _r001 (got {gen_acd.name})", gen_acd.stem.endswith("_r001"))
+        check("a user-supplied project_name is sanitized too",
+              op.project_name_problems(op.versioned_acd_path(gen_l5x, project_name="Bad Name-1").stem) == [])
+        check("date and time are joined by an underscore, never a dash",
+              "-" not in op.next_timestamped_path(out, "X", "L5X").name)
+        legacy = tmp / "Job" / "Legacy_20260930-121500.L5X"
+        check("older dashed-timestamp exports are still recognised and cleaned",
+              op.derive_base_name(legacy.stem) == ("Legacy", False))
+        check("derive_base_name flags a genuinely invalid name as changed",
+              op.derive_base_name("My Project") == ("My_Project", True))
 
         print("\n=== protected targets are refused ===")
         check("existing file is refused", op.is_protected_target(acd) is not None)

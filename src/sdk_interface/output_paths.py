@@ -23,7 +23,12 @@ KIND_FOLDERS = {
 DEFAULT_PROTECTED_FILES = "THD_LG_CP2.ACD"
 
 _REV_RE = re.compile(r"_r(\d{3,})$", re.IGNORECASE)
-_TS_RE = re.compile(r"_\d{8}-\d{6}(_r\d{3,})?$")
+# Timestamps use an underscore between date and time: Studio 5000 project names may not contain
+# dashes. The optional "-" is only for recognising files exported before this rule was enforced.
+_TS_RE = re.compile(r"_\d{8}[-_]\d{6}(_r\d{3,})?$")
+_INVALID_CHARS_RE = re.compile(r"[^A-Za-z0-9_]")
+_MULTI_UNDERSCORE_RE = re.compile(r"_{2,}")
+TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
 
 def protected_names() -> set:
@@ -76,8 +81,51 @@ def _strip_rev(stem: str) -> str:
 
 
 def _base_stem(stem: str) -> str:
-    """Project name without an export timestamp or revision suffix."""
-    return _strip_rev(_TS_RE.sub("", stem))
+    """Project name without an export timestamp or revision suffix (and made name-safe)."""
+    return derive_base_name(stem)[0]
+
+
+def derive_base_name(stem: str) -> tuple:
+    """(valid project name, True if it had to be changed) from a file stem: the timestamp and
+    revision suffixes we add are removed first, so only a genuinely invalid name counts as changed."""
+    raw = _strip_rev(_TS_RE.sub("", stem))
+    clean = sanitize_project_name(raw)
+    return clean, clean != raw
+
+
+def project_name_problems(name: str) -> list:
+    """
+    Why `name` can't be used as a Studio 5000 project name (empty list = fine).
+
+    Rules (as found converting L5X -> ACD): cannot start with a number, no spaces, no special
+    characters (dashes, periods, # @ $ and the like - letters, digits and underscore only), and no
+    consecutive underscores. A trailing underscore is also flagged because our "_rNNN" revision
+    suffix would turn it into consecutive underscores.
+    """
+    problems = []
+    if not name:
+        return ["name is empty"]
+    if name[0].isdigit():
+        problems.append("starts with a number")
+    if " " in name:
+        problems.append("contains a space")
+    bad = sorted(set(_INVALID_CHARS_RE.findall(name)) - {" "})
+    if bad:
+        problems.append("contains special characters: " + " ".join(repr(c) for c in bad))
+    if "__" in name:
+        problems.append("contains consecutive underscores")
+    if name.endswith("_"):
+        problems.append("ends with an underscore")
+    return problems
+
+
+def sanitize_project_name(name: str) -> str:
+    """Closest valid project name: invalid characters -> '_', underscore runs collapsed,
+    leading digits prefixed with 'P_', trailing underscores dropped, never empty."""
+    cleaned = _MULTI_UNDERSCORE_RE.sub("_", _INVALID_CHARS_RE.sub("_", name or "")).strip("_")
+    if not cleaned:
+        return "Project"
+    return f"P_{cleaned}" if cleaned[0].isdigit() else cleaned
 
 
 def next_revision_path(directory: Union[str, Path], stem: str, ext: str) -> Path:
@@ -97,10 +145,10 @@ def next_revision_path(directory: Union[str, Path], stem: str, ext: str) -> Path
 
 def next_timestamped_path(directory: Union[str, Path], stem: str, ext: str,
                           now: Optional[datetime] = None) -> Path:
-    """<stem>_<YYYYMMDD-HHMMSS>.<ext>; adds _rNNN if that exact name already exists."""
+    """<stem>_<YYYYMMDD_HHMMSS>.<ext>; adds _rNNN if that exact name already exists."""
     directory = Path(directory)
     ext = ext.lstrip(".")
-    ts = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    ts = (now or datetime.now()).strftime(TIMESTAMP_FORMAT)
     candidate = directory / f"{stem}_{ts}.{ext}"
     n = 1
     while candidate.exists():
@@ -119,12 +167,12 @@ def versioned_acd_path(l5x_path: Union[str, Path], output_dir: Optional[Union[st
                        project_name: Optional[str] = None) -> Path:
     src = Path(l5x_path)
     out = resolve_output_dir(src, "acd", output_dir)
-    return next_revision_path(out, project_name or _base_stem(src.stem), "ACD")
+    return next_revision_path(out, sanitize_project_name(project_name) if project_name else _base_stem(src.stem), "ACD")
 
 
 def versioned_compare_path(path_a: Union[str, Path], path_b: Union[str, Path], ext: str,
                            output_dir: Optional[Union[str, Path]] = None) -> Path:
     a, b = Path(path_a), Path(path_b)
     out = resolve_output_dir(a, "compare", output_dir)
-    stem = f"{_base_stem(a.stem)}__vs__{_base_stem(b.stem)}"
+    stem = f"{_base_stem(a.stem)}_vs_{_base_stem(b.stem)}"
     return next_timestamped_path(out, stem, ext)

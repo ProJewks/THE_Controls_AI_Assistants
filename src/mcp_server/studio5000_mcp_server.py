@@ -2077,7 +2077,7 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                 properties = {
                     'l5x_path': {'type': 'string', 'description': 'Path to a whole-controller .L5X file'},
                     'output_dir': {'type': 'string', 'description': 'Optional output folder. Default: <l5x folder>/ACD_Revisions/<name>/ (created if missing). The file is always a new _rNNN revision - existing ACDs are never overwritten.'},
-                    'project_name': {'type': 'string', 'description': 'Optional base name for the new ACD (default: the L5X file name without its timestamp)'}
+                    'project_name': {'type': 'string', 'description': 'Optional base name for the new ACD (default: the L5X file name without its timestamp, cleaned up). Must be a valid Studio 5000 project name: no leading digit, no spaces or special characters (letters, digits, underscore only), no consecutive underscores - otherwise the call is rejected with a suggested name.'}
                 }
                 required = ['l5x_path']
             elif name == 'compare_l5x_projects':

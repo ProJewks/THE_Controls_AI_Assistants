@@ -538,10 +538,26 @@ class L5XSDKMCPIntegration:
                 return {'success': False, 'error': f'import_l5x_to_acd expects an .L5X file, got: {src.name}'}
             if not src.exists():
                 return {'success': False, 'error': f'L5X file not found: {l5x_path}'}
-            dest = self._output_paths().versioned_acd_path(src, output_dir, project_name)
+            op = self._output_paths()
+            renamed_from = None
+            if project_name:
+                problems = op.project_name_problems(project_name)
+                if problems:
+                    # Studio 5000 rejects these names - say so instead of quietly producing a different one.
+                    return {'success': False,
+                            'error': f"project_name {project_name!r} is not a valid Studio 5000 project name: "
+                                     + "; ".join(problems),
+                            'suggested_name': op.sanitize_project_name(project_name),
+                            'hint': 'Names must start with a letter or underscore, use only letters, digits and '
+                                    'underscores, and have no consecutive underscores.'}
+            dest = op.versioned_acd_path(src, output_dir, project_name)
+            if not project_name and op.derive_base_name(src.stem)[1]:
+                renamed_from = src.stem  # name derived from the L5X file name had to be cleaned up
             result = await self._convert(src, dest)
             if result.get('success'):
                 result['message'] = f'Created new revision {dest.name}. Open it in Studio 5000 to review before use.'
+                if renamed_from:
+                    result['renamed_from'] = renamed_from
             return result
         except Exception as e:
             logger.error(f"import_l5x_to_acd failed: {e}")
