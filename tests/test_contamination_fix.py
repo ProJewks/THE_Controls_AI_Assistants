@@ -88,6 +88,23 @@ async def main():
         rung_count_b = scoped_b['analysis']['rung_count']
         check(f"ProjectB's SharedRoutineName has 5 rungs (got: {rung_count_b})", rung_count_b == 5)
 
+    print("\n=== extract_routine_content must honor acd_path (it used to search every project) ===")
+    ext_a = await integration.extract_routine_content(PROJECT_A, "SharedRoutineName", output_format="rungs_only")
+    check(f"extract(ProjectA) succeeded (got: {ext_a.get('error', 'ok')})", ext_a.get('success') is True)
+    check(f"extract(ProjectA) returns ProjectA's 2 rungs (got: {ext_a.get('total_rungs')})",
+          ext_a.get('total_rungs') == 2)
+    ext_b = await integration.extract_routine_content(PROJECT_B, "SharedRoutineName", output_format="rungs_only")
+    check(f"extract(ProjectB) returns ProjectB's 5 rungs (got: {ext_b.get('total_rungs')})",
+          ext_b.get('total_rungs') == 5)
+    ext_none = await integration.extract_routine_content(str(FIXTURES / "NeverIndexedProject.ACD"), "SharedRoutineName")
+    check(f"extract with a non-matching acd_path refuses to blend projects (got: {ext_none})",
+          ext_none.get('success') is False and set(ext_none.get('candidates', [])) == {'ProjectA', 'ProjectB'})
+
+    print("\n=== search fallback must respect project_name (used to ignore it) ===")
+    text_hits = db._text_search("SharedRoutineName", 50, None, "ProjectA")
+    check(f"text search scoped to ProjectA returns only ProjectA chunks ({len(text_hits)} hits)",
+          text_hits and all(h.project_name == 'ProjectA' for h in text_hits))
+
     print("\n=== get_project_overview for a NEVER-indexed project must error clearly, not substitute ===")
     fake_overview = await integration.get_project_overview(str(FIXTURES / "NeverIndexedProject"))
     check(f"unindexed project lookup returns success=False (got: {fake_overview})",

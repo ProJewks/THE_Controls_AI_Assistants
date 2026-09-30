@@ -474,6 +474,131 @@ class L5XSDKMCPIntegration:
                 'error': f'Logic generation failed: {str(e)}'
             }
     
+    @staticmethod
+    def _output_paths():
+        """output_paths helper (sdk_interface is a sibling of l5x_analyzer under src/)."""
+        try:
+            from sdk_interface import output_paths
+        except ImportError:
+            from ..sdk_interface import output_paths
+        return output_paths
+
+    async def _convert(self, source: Path, dest: Path, detailed_l5x: bool = False) -> Dict[str, Any]:
+        """Protected-target check, then SDK conversion (dest is always a brand-new path)."""
+        op = self._output_paths()
+        reason = op.is_protected_target(dest)
+        if reason:
+            return {'success': False, 'error': f'Refusing to write output: {reason}'}
+        analyzer = self.vector_db.sdk_analyzer or SDKPoweredL5XAnalyzer()
+        result = await analyzer.convert_project(str(source), str(dest), detailed_l5x=detailed_l5x)
+        if not result.get('success'):
+            # Don't leave empty output folders behind after a failed run (rmdir only removes empty dirs).
+            for folder in (dest.parent, dest.parent.parent):
+                try:
+                    folder.rmdir()
+                except OSError:
+                    break
+        return result
+
+    async def export_acd_to_l5x(self, acd_path: str, output_dir: Optional[str] = None,
+                                detailed_l5x: bool = False) -> Dict[str, Any]:
+        """
+        Export an ACD to a new L5X file via the Logix Designer SDK.
+
+        Output: <acd_dir>/L5X_Exports/<ProjectName>/<ProjectName>_<timestamp>.L5X (or output_dir).
+        Never overwrites - every export gets its own timestamped file. The ACD is only opened,
+        never modified (safe on a live project unless Studio 5000 holds the file lock).
+        """
+        try:
+            src = Path(acd_path)
+            if src.suffix.lower() != '.acd':
+                return {'success': False, 'error': f'export_acd_to_l5x expects an .ACD file, got: {src.name}'}
+            if not src.exists():
+                return {'success': False, 'error': f'Project file not found: {acd_path}'}
+            dest = self._output_paths().versioned_l5x_path(src, output_dir)
+            result = await self._convert(src, dest, detailed_l5x)
+            if result.get('success'):
+                result['message'] = f'Exported {src.name} -> {dest}'
+            return result
+        except Exception as e:
+            logger.error(f"export_acd_to_l5x failed: {e}")
+            return {'success': False, 'error': f'Export failed: {e}'}
+
+    async def import_l5x_to_acd(self, l5x_path: str, output_dir: Optional[str] = None,
+                                project_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Build a new ACD from a whole-controller L5X via the SDK.
+
+        Output: <l5x_dir>/ACD_Revisions/<Name>/<Name>_rNNN.ACD - a fresh revision every time;
+        existing ACDs (including the live THD_LG_CP2.ACD) are never written to.
+        """
+        try:
+            src = Path(l5x_path)
+            if src.suffix.lower() != '.l5x':
+                return {'success': False, 'error': f'import_l5x_to_acd expects an .L5X file, got: {src.name}'}
+            if not src.exists():
+                return {'success': False, 'error': f'L5X file not found: {l5x_path}'}
+            dest = self._output_paths().versioned_acd_path(src, output_dir, project_name)
+            result = await self._convert(src, dest)
+            if result.get('success'):
+                result['message'] = f'Created new revision {dest.name}. Open it in Studio 5000 to review before use.'
+            return result
+        except Exception as e:
+            logger.error(f"import_l5x_to_acd failed: {e}")
+            return {'success': False, 'error': f'Import failed: {e}'}
+
+    async def compare_l5x_projects(self, path_a: str, path_b: str, write_report: bool = True,
+                                   include_details: bool = False) -> Dict[str, Any]:
+        """
+        Compare two projects (.L5X or .ACD; ACDs are exported to L5X_Exports/ first).
+
+        A is the baseline, B the other side. Live values (tag data, module I/O) are ignored.
+        The markdown/JSON reports go to <A dir>/Compare_Reports/<A stem>/ with a timestamp.
+        """
+        import json
+        from .l5x_compare import compare_l5x_files, render_markdown
+
+        try:
+            resolved = []
+            exported = []
+            for label, raw in (('A', path_a), ('B', path_b)):
+                p = Path(raw)
+                if not p.exists():
+                    return {'success': False, 'error': f'File not found ({label}): {raw}'}
+                if p.suffix.lower() == '.acd':
+                    exp = await self.export_acd_to_l5x(str(p))
+                    if not exp.get('success'):
+                        return {'success': False, 'error': f"Could not export {label} ({p.name}) to L5X: {exp.get('error')}",
+                                'hint': exp.get('hint')}
+                    exported.append(exp['output'])
+                    p = Path(exp['output'])
+                elif p.suffix.lower() != '.l5x':
+                    return {'success': False, 'error': f'Unsupported file type for {label}: {p.name} (use .L5X or .ACD)'}
+                resolved.append(p)
+
+            result = compare_l5x_files(str(resolved[0]), str(resolved[1]))
+            markdown = render_markdown(result, Path(path_a).name, Path(path_b).name)
+            response: Dict[str, Any] = {
+                'success': True,
+                'summary': result['summary'],
+                'exported_l5x': exported,
+                'markdown': markdown,
+            }
+            if include_details:
+                response['details'] = result
+            if write_report:
+                op = self._output_paths()
+                md_path = op.versioned_compare_path(resolved[0], resolved[1], 'md')
+                json_path = md_path.with_suffix('.json')
+                md_path.write_text(markdown, encoding='utf-8')
+                json_path.write_text(json.dumps(result, indent=2), encoding='utf-8')
+                response['report_markdown'] = str(md_path)
+                response['report_json'] = str(json_path)
+            return response
+        except Exception as e:
+            logger.error(f"compare_l5x_projects failed: {e}")
+            return {'success': False, 'error': f'Comparison failed: {e}'}
+
     async def extract_routine_content(self, acd_path: str, routine_name: str,
                                     program_name: str = "MainProgram", 
                                     output_format: str = "summary") -> Dict[str, Any]:
@@ -481,7 +606,8 @@ class L5XSDKMCPIntegration:
         Extract specific routine content for analysis using vector database
         
         Args:
-            acd_path: Path to ACD/L5K file (for context, not opened)
+            acd_path: Path to ACD/L5K file (not opened - its file stem selects which indexed
+                project to read from, so identically named routines in two projects don't mix)
             routine_name: Routine to extract
             program_name: Parent program name  
             output_format: 'summary', 'full', or 'rungs_only'
@@ -494,9 +620,12 @@ class L5XSDKMCPIntegration:
             
             # Search for the specific routine in the vector database
             routine_query = f"routine {routine_name}"
+            project_name = Path(acd_path).stem if acd_path else None
+            scope = project_name if project_name in self.vector_db.indexed_projects else None
             search_results = self.vector_db.search_l5x_content(
                 routine_query, limit=50, 
-                chunk_types=[L5XChunkType.ROUTINE, L5XChunkType.LADDER_RUNG]
+                chunk_types=[L5XChunkType.ROUTINE, L5XChunkType.LADDER_RUNG],
+                project_name=scope
             )
             
             # Filter results to exact routine match
@@ -504,7 +633,9 @@ class L5XSDKMCPIntegration:
             rung_chunks = []
             
             for result in search_results:
-                # Check if this is the exact routine we want
+                # Check if this is the exact routine we want (in the requested program)
+                if result.location.parent_program and result.location.parent_program != program_name:
+                    continue
                 if (result.location.parent_routine == routine_name or 
                     result.name == routine_name):
                     
@@ -516,8 +647,23 @@ class L5XSDKMCPIntegration:
             if not routine_chunks and not rung_chunks:
                 return {
                     'success': False,
-                    'error': f'Routine {routine_name} not found in indexed content. Make sure L5X files are indexed first.'
+                    'error': f'Routine {routine_name} not found in program {program_name} of '
+                             f'{scope or "any indexed project"}. Make sure the project is indexed first.',
+                    'indexed_projects': sorted(self.vector_db.indexed_projects.keys())
                 }
+
+            if scope is None:
+                # acd_path didn't match an indexed project, so results came from everywhere -
+                # refuse to silently blend several projects' copies of the same routine.
+                found_in = sorted({r.project_name for r in routine_chunks + rung_chunks} - {None})
+                if len(found_in) > 1:
+                    return {
+                        'success': False,
+                        'error': f'Routine {routine_name} exists in several indexed projects and '
+                                 f'{acd_path!r} does not match any of them.',
+                        'candidates': found_in,
+                        'hint': 'Pass the acd_path of one of the candidate projects.'
+                    }
             
             # Sort rungs by rung number
             rung_chunks.sort(key=lambda x: x.location.rung_number or 0)

@@ -27,6 +27,21 @@ except ImportError as e:
     LogixProject = None
     _LOGIX_PROJECT_IMPORT_ERROR = e
 
+def conversion_hint(error_text: str) -> str:
+    """Plain-language next step for an SDK conversion failure (the raw SDK text is often cryptic)."""
+    low = error_text.lower()
+    if "import_aborted" in low or "import was cancelled" in low:
+        return ("The SDK could not import this L5X as a whole project (usually hardware/module profiles "
+                "or add-on definitions that aren't installed on this machine, or a revision mismatch). "
+                "Open the L5X in Studio 5000 (File > Open) to see the import error log. "
+                "ACD -> L5X export is unaffected.")
+    if any(w in low for w in ("lock", "in use", "being used by another process", "access is denied")):
+        return "The file looks locked - it may be open in Studio 5000. Close it, or export manually from Studio 5000."
+    if "revision" in low or "version" in low:
+        return "The project may need a different Logix Designer revision than the one installed."
+    return "See the SDK error above; try opening the file in Studio 5000 to confirm it is healthy."
+
+
 class SDKPoweredL5XAnalyzer:
     """
     Uses Studio 5000 SDK for L5X analysis and modification operations.
@@ -176,7 +191,7 @@ class SDKPoweredL5XAnalyzer:
             xpath = f"Controller/Programs/Program[@Name='{program_name}']/Routines/Routine[@Name='{routine_name}']"
             
             # Create output file path
-            output_path = self.temp_dir / f"{routine_name}_routine.L5X"
+            output_path = self.temp_dir / f"{program_name}_{routine_name}_routine.L5X"
             if output_path.exists():
                 output_path.unlink()
 
@@ -299,13 +314,64 @@ class SDKPoweredL5XAnalyzer:
             logger.error(f"Failed to save project: {e}")
             return False
     
-    def parse_routine_l5x(self, l5x_file_path: str) -> List[L5XChunk]:
+    async def convert_project(self, source_path: str, dest_path: str,
+                              detailed_l5x: bool = False, timeout_s: float = 600) -> Dict[str, Any]:
+        """
+        Convert a project between formats via the SDK (ACD -> L5X or L5X -> ACD).
+
+        The SDK's save_as picks the output format from dest_path's extension. Uses its own
+        SDK handle, so it does not disturb a project opened for indexing. dest_path must not
+        exist - save_as is called with force=False so nothing is ever overwritten.
+        """
+        import time
+
+        if not self.sdk_available or LogixProject is None:
+            return {'success': False, 'error': f"Logix Designer SDK not available: {_LOGIX_PROJECT_IMPORT_ERROR}"}
+        dest = Path(dest_path)
+        if dest.exists():
+            return {'success': False, 'error': f"Refusing to overwrite existing file: {dest}"}
+
+        started = time.monotonic()
+        project = None
+
+        async def _run():
+            nonlocal project
+            project = await LogixProject.open_logix_project(str(source_path))
+            await project.save_as(str(dest), False, detailed_l5x)
+
+        try:
+            await asyncio.wait_for(_run(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            return {'success': False, 'error': f"Timed out after {timeout_s:.0f}s converting {source_path}"}
+        except Exception as e:
+            msg = str(e)
+            return {'success': False, 'error': f"Conversion failed: {msg}", 'hint': conversion_hint(msg)}
+        finally:
+            if project is not None:
+                try:
+                    project.close()  # synchronous in the SDK
+                except Exception as e:
+                    logger.warning(f"Error closing project after conversion: {e}")
+
+        if not dest.exists():
+            return {'success': False, 'error': f"SDK reported success but {dest} was not created"}
+        return {
+            'success': True,
+            'source': str(source_path),
+            'output': str(dest),
+            'size_bytes': dest.stat().st_size,
+            'elapsed_s': round(time.monotonic() - started, 1),
+        }
+
+    def parse_routine_l5x(self, l5x_file_path: str, program_name: Optional[str] = None) -> List[L5XChunk]:
         """
         Parse an extracted routine L5X file into chunks
-        
+
         Args:
             l5x_file_path: Path to extracted L5X file
-            
+            program_name: Parent program the file was exported from. ElementTree can't walk
+                to a parent element, so the caller (which built the export XPath) supplies it.
+
         Returns:
             List of L5X chunks representing the routine content
         """
@@ -315,17 +381,31 @@ class SDKPoweredL5XAnalyzer:
             tree = ET.parse(l5x_file_path)
             root = tree.getroot()
             
-            # Find routine elements
-            routines = root.findall(".//Routine")
-            
-            for routine in routines:
+            # ElementTree has no parent links - build them so each routine's owning Program
+            # (or AOI) can be found from the XML itself, for routine exports and whole-controller
+            # exports alike.
+            parents = {child: parent for parent in root.iter() for child in parent}
+
+            def _ancestor(elem, tag):
+                while elem in parents:
+                    elem = parents[elem]
+                    if elem.tag == tag:
+                        return elem
+                return None
+
+            fallback_program = program_name or 'MainProgram'
+
+            for routine in root.findall(".//Routine"):
+                # AOI-embedded routines (Logic/Prescan/EnableInFalse) ride along as dependencies
+                # of a routine export and aren't program routines.
+                if _ancestor(routine, 'AddOnInstructionDefinition') is not None:
+                    continue
+
                 routine_name = routine.get('Name', 'Unknown')
                 routine_type = routine.get('Type', 'RLL')
-                
-                # Find parent program
-                program_elem = routine.find("../../../../..")
-                program_name = program_elem.get('Name', 'MainProgram') if program_elem is not None else 'MainProgram'
-                
+                program_elem = _ancestor(routine, 'Program')
+                program_name = program_elem.get('Name', fallback_program) if program_elem is not None else fallback_program
+
                 # Create routine chunk
                 routine_content = ET.tostring(routine, encoding='unicode')
                 routine_chunk = create_routine_chunk(

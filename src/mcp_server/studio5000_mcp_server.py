@@ -930,6 +930,24 @@ class Studio5000MCPServer:
         )
         
         self.server.add_tool(
+            "export_acd_to_l5x",
+            "Export an ACD to a new versioned L5X file (into L5X_Exports/<project>/) via the Logix Designer SDK",
+            self.export_acd_to_l5x
+        )
+
+        self.server.add_tool(
+            "import_l5x_to_acd",
+            "Create a new revisioned ACD (ACD_Revisions/<project>/<name>_rNNN.ACD) from an L5X; never overwrites",
+            self.import_l5x_to_acd
+        )
+
+        self.server.add_tool(
+            "compare_l5x_projects",
+            "Compare two projects (.L5X or .ACD) - tags, modules, UDTs, AOIs and rung-level routine diffs, ignoring live values",
+            self.compare_l5x_projects
+        )
+
+        self.server.add_tool(
             "search_l5x_content",
             "Semantic search within indexed L5X content",
             self.search_l5x_content
@@ -1672,6 +1690,21 @@ class Studio5000MCPServer:
             acd_path, routines_to_index, force_rebuild
         )
     
+    async def export_acd_to_l5x(self, acd_path: str, output_dir: Optional[str] = None,
+                               detailed_l5x: bool = False) -> Dict[str, Any]:
+        """Export an ACD to a new timestamped L5X file (never overwrites)"""
+        return await self.l5x_integration.export_acd_to_l5x(acd_path, output_dir, detailed_l5x)
+
+    async def import_l5x_to_acd(self, l5x_path: str, output_dir: Optional[str] = None,
+                               project_name: Optional[str] = None) -> Dict[str, Any]:
+        """Create a new revisioned ACD from an L5X (never overwrites)"""
+        return await self.l5x_integration.import_l5x_to_acd(l5x_path, output_dir, project_name)
+
+    async def compare_l5x_projects(self, path_a: str, path_b: str, write_report: bool = True,
+                                  include_details: bool = False) -> Dict[str, Any]:
+        """Compare two projects (.L5X or .ACD) and report differences"""
+        return await self.l5x_integration.compare_l5x_projects(path_a, path_b, write_report, include_details)
+
     async def search_l5x_content(self, query: str, file_filter: Optional[str] = None,
                                component_type: Optional[str] = None, project_name: Optional[str] = None,
                                limit: int = 20) -> Dict[str, Any]:
@@ -2033,6 +2066,28 @@ async def handle_mcp_request(server: Studio5000MCPServer, request: Dict) -> Opti
                     'force_rebuild': {'type': 'boolean', 'description': 'Force rebuild even if cached (default: false)'}
                 }
                 required = ['acd_path']
+            elif name == 'export_acd_to_l5x':
+                properties = {
+                    'acd_path': {'type': 'string', 'description': 'Path to the .ACD file to export (opened read-only via the Logix Designer SDK)'},
+                    'output_dir': {'type': 'string', 'description': 'Optional output folder. Default: <acd folder>/L5X_Exports/<project name>/ (created if missing). The file is always a new timestamped name - nothing is overwritten.'},
+                    'detailed_l5x': {'type': 'boolean', 'description': 'Include detailed L5X (default: false)'}
+                }
+                required = ['acd_path']
+            elif name == 'import_l5x_to_acd':
+                properties = {
+                    'l5x_path': {'type': 'string', 'description': 'Path to a whole-controller .L5X file'},
+                    'output_dir': {'type': 'string', 'description': 'Optional output folder. Default: <l5x folder>/ACD_Revisions/<name>/ (created if missing). The file is always a new _rNNN revision - existing ACDs are never overwritten.'},
+                    'project_name': {'type': 'string', 'description': 'Optional base name for the new ACD (default: the L5X file name without its timestamp)'}
+                }
+                required = ['l5x_path']
+            elif name == 'compare_l5x_projects':
+                properties = {
+                    'path_a': {'type': 'string', 'description': 'Baseline project (.L5X or .ACD; an ACD is exported to L5X first)'},
+                    'path_b': {'type': 'string', 'description': 'Project to compare against the baseline (.L5X or .ACD)'},
+                    'write_report': {'type': 'boolean', 'description': 'Write .md and .json reports to <A folder>/Compare_Reports/<A name>/ (default: true)'},
+                    'include_details': {'type': 'boolean', 'description': 'Also return the full structured diff (default: false - summary and markdown only)'}
+                }
+                required = ['path_a', 'path_b']
             elif name == 'search_l5x_content':
                 properties = {
                     'query': {'type': 'string', 'description': 'Natural language search query'},

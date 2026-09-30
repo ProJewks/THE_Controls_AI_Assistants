@@ -75,6 +75,7 @@ class L5XSearchResult:
     location: L5XLocation
     file_path: str
     insertion_hints: List[str] = None
+    project_name: Optional[str] = None
     
     def __post_init__(self):
         if self.insertion_hints is None:
@@ -222,7 +223,9 @@ class L5XVectorDatabase:
         project_name = Path(acd_path).stem
         
         # Check if already indexed and not forcing rebuild
-        if not force_rebuild and self._is_project_indexed(project_name):
+        # Cache key is the file stem, so also compare the stored path - two ACDs with the
+        # same name in different folders must not silently share (or overwrite) an index.
+        if not force_rebuild and self._is_project_indexed(project_name, acd_path):
             logger.info(f"Project {project_name} already indexed")
             return True
         
@@ -301,7 +304,7 @@ class L5XVectorDatabase:
                 return []
             
             # Parse extracted L5X into chunks
-            chunks = self.sdk_analyzer.parse_routine_l5x(l5x_path)
+            chunks = self.sdk_analyzer.parse_routine_l5x(l5x_path, program_name)
             
             # Update file path in chunks
             for chunk in chunks:
@@ -383,7 +386,7 @@ class L5XVectorDatabase:
 
         if not self.model or not self.index:
             logger.warning("Vector search not available, falling back to text search")
-            return self._text_search(query, limit, chunk_types)
+            return self._text_search(query, limit, chunk_types, project_name)
 
         try:
             # Create embedding for the query
@@ -417,7 +420,8 @@ class L5XVectorDatabase:
                         content=chunk.content,
                         location=chunk.location,
                         file_path=chunk.location.file_path,
-                        insertion_hints=self._generate_insertion_hints(chunk)
+                        insertion_hints=self._generate_insertion_hints(chunk),
+                        project_name=getattr(chunk, 'project_name', None)
                     )
                     results.append(result)
                     
@@ -429,7 +433,7 @@ class L5XVectorDatabase:
             
         except Exception as e:
             logger.error(f"Vector search failed: {e}")
-            return self._text_search(query, limit, chunk_types)
+            return self._text_search(query, limit, chunk_types, project_name)
     
     def get_xref(self, project_name: Optional[str] = None):
         """
@@ -667,13 +671,16 @@ class L5XVectorDatabase:
         complexity = (total_content_length / 1000) + (total_dependencies * 0.5) + (rung_count * 0.1)
         return min(complexity, 10.0)  # Cap at 10
     
-    def _text_search(self, query: str, limit: int, chunk_types: List[L5XChunkType] = None) -> List[L5XSearchResult]:
+    def _text_search(self, query: str, limit: int, chunk_types: List[L5XChunkType] = None,
+                     project_name: Optional[str] = None) -> List[L5XSearchResult]:
         """Enhanced fallback text-based search with fuzzy matching"""
         results = []
         query_lower = query.lower()
         
         for chunk in self.chunks_data:
             if chunk_types and chunk.chunk_type not in chunk_types:
+                continue
+            if project_name and getattr(chunk, 'project_name', None) != project_name:
                 continue
             
             searchable = chunk.searchable_text.lower()
@@ -721,7 +728,8 @@ class L5XVectorDatabase:
                     content=chunk.content,
                     location=chunk.location,
                     file_path=chunk.location.file_path,
-                    insertion_hints=self._generate_insertion_hints(chunk)
+                    insertion_hints=self._generate_insertion_hints(chunk),
+                    project_name=getattr(chunk, 'project_name', None)
                 )
                 results.append(result)
         
@@ -730,10 +738,17 @@ class L5XVectorDatabase:
         logger.info(f"Text search found {len(results)} results for query: {query}")
         return results[:limit]
     
-    def _is_project_indexed(self, project_name: str) -> bool:
-        """Check if project is already indexed"""
+    def _is_project_indexed(self, project_name: str, acd_path: Optional[str] = None) -> bool:
+        """Check if project is already indexed (and, if acd_path is given, indexed from that file)"""
         self._load_metadata()
-        return project_name in self.indexed_projects
+        entry = self.indexed_projects.get(project_name)
+        if entry is None:
+            return False
+        stored = entry.get('path') if isinstance(entry, dict) else None
+        if acd_path and stored and os.path.normcase(os.path.abspath(stored)) != os.path.normcase(os.path.abspath(acd_path)):
+            logger.warning(f"Project name '{project_name}' is indexed from a different file ({stored}); re-indexing {acd_path}")
+            return False
+        return True
     
     def _cache_exists(self) -> bool:
         """Check if cache files exist"""
