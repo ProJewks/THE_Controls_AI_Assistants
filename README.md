@@ -22,8 +22,8 @@ This revolutionary MCP (Model Context Protocol) server transforms PLC programmin
 python --version  # Must show 3.12.x
 
 # 2. Clone the repo
-git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
-cd THE_Studio5000_AI_Assistant_V35
+git clone https://github.com/ProJewks/THE_Controls_AI_Assistants.git
+cd THE_Controls_AI_Assistants
 
 # 3. Run the setup script — installs everything and writes your config for you
 python setup.py
@@ -106,8 +106,8 @@ edit it by hand, run `setup.py` instead.
 
 2. **Clone and run setup**:
    ```bash
-   git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
-   cd THE_Studio5000_AI_Assistant_V35
+   git clone https://github.com/ProJewks/THE_Controls_AI_Assistants.git
+   cd THE_Controls_AI_Assistants
    python setup.py
    ```
    This installs dependencies, the SDK wheel, and generates your config in one step —
@@ -212,8 +212,8 @@ edit it by hand, run `setup.py` instead.
 #### Step 2: Get the Project
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/ProJewks/THE_Studio5000_AI_Assistant_V35.git
-   cd THE_Studio5000_AI_Assistant_V35
+   git clone https://github.com/ProJewks/THE_Controls_AI_Assistants.git
+   cd THE_Controls_AI_Assistants
    ```
 2. **Prefer the one-command path?** Run `python setup.py` now and skip to
    [Step 4](#step-4-test-your-installation-) — it does Steps 3 and 3.5 for you, including
@@ -347,7 +347,7 @@ you passed `--write-claude-desktop`. Nothing below to fill in by hand.
 **Doing it manually?** Add the following to your Claude Desktop configuration file (typically
 found at `%APPDATA%\Claude\config.json`). Replace `YourUsername` and the folder name with
 wherever you actually cloned this repo — the folder is only called
-`THE_Studio5000_AI_Assistant_V35` if you cloned it with the default name:
+`THE_Controls_AI_Assistants` if you cloned it with the default name:
 
 ### Windows Configuration
 
@@ -358,9 +358,9 @@ wherever you actually cloned this repo — the folder is only called
     "studio5000-ai-assistant": {
       "command": "python",
       "args": [
-        "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35\\src\\mcp_server\\studio5000_mcp_server.py"
+        "C:\\Users\\YourUsername\\THE_Controls_AI_Assistants\\src\\mcp_server\\studio5000_mcp_server.py"
       ],
-      "cwd": "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35",
+      "cwd": "C:\\Users\\YourUsername\\THE_Controls_AI_Assistants",
       "env": {
         "STUDIO5000_DOC_PATH": "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000",
         "STUDIO5000_SDK_PATH": "C:\\Users\\Public\\Documents\\Studio 5000\\Logix Designer SDK\\python"
@@ -377,11 +377,11 @@ wherever you actually cloned this repo — the folder is only called
     "studio5000-ai-assistant": {
       "command": "python",
       "args": [
-        "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35\\src\\mcp_server\\studio5000_mcp_server.py",
+        "C:\\Users\\YourUsername\\THE_Controls_AI_Assistants\\src\\mcp_server\\studio5000_mcp_server.py",
         "--doc-root",
         "C:\\Program Files (x86)\\Rockwell Software\\Studio 5000\\Logix Designer\\ENU\\v35\\Bin\\Help\\ENU\\rs5000"
       ],
-      "cwd": "C:\\Users\\YourUsername\\THE_Studio5000_AI_Assistant_V35"
+      "cwd": "C:\\Users\\YourUsername\\THE_Controls_AI_Assistants"
     }
   }
 }
@@ -1008,7 +1008,7 @@ The MCP server consists of four main components:
 ## 📁 Project Structure
 
 ```
-THE_Studio5000_AI_Assistant_V35/        # (folder name is whatever you clone it as)
+THE_Controls_AI_Assistants/        # (folder name is whatever you clone it as)
 ├── setup.py                             # One-command installer — run this first
 ├── src/                                # Main source code
 │   ├── mcp_server/
