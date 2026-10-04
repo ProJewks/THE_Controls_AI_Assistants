@@ -1,0 +1,16 @@
+[project]
+name = "autocad-mcp"
+version = "0.1.0"
+description = "MCP server exposing AutoCAD (COM automation) to Claude Code"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "pywin32>=306",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["autocad_mcp"]

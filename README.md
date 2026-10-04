@@ -1,6 +1,17 @@
 # NOTICE:
 This is a **v35 edition** fork of the Studio 5000 AI Assistant, maintained independently. It defaults to Studio 5000 Logix Designer **v35**, but supports any installed version through the setup script's `--version` flag (see [Choosing your Studio 5000 version](#-choosing-your-studio-5000-version) below). Credit to the original project this was based on: [rivie13/studio5000-AI-Assistant](https://github.com/rivie13/studio5000-AI-Assistant) (v36 by default). This repo is a prototype — you're welcome to fork it and make it your own.
 
+
+## Repository layout
+
+This repo holds the local MCP servers used for controls engineering:
+
+| Folder | MCP server | Notes |
+|---|---|---|
+| `src/`, `tests/` (repo root) | `studio5000-ai-assistant` | Studio 5000 / L5X / ACD assistant (this README) |
+| [`autocad/`](autocad/README.md) | `autocad` | AutoCAD COM automation |
+| [`emulate3d/`](emulate3d/README.md) | `emulate3d` | Connection docs for the Emulate3D built-in MCP server |
+| [`ignition/`](ignition/README.md) | `ignition-mcp` | Ignition gateway tools (GPL-3.0 copy of WhiskeyHouse/ignition-mcp, see `THIRD_PARTY_NOTICES.md`) |
 # 🤖 Studio 5000 AI-Powered PLC Programming Assistant
 
 This revolutionary MCP (Model Context Protocol) server transforms PLC programming by providing AI-powered code generation, L5X routine creation, real .ACD file generation, and seamless Studio 5000 integration. Convert natural language specifications directly into working ladder logic and complete Studio 5000 projects!

@@ -68,3 +68,13 @@ docstring of `l5x_xref.py`):
 - **Read/write classification**: derived from each parsed instruction's
   mnemonic and operand position (see `_INSTRUCTION_ACCESS` in
   `l5x_xref.py`) - nodeblue's cross-reference does not classify access.
+
+## WhiskeyHouse/ignition-mcp
+
+**Source**: https://github.com/WhiskeyHouse/ignition-mcp
+**License**: GNU General Public License v3.0 (full text in `ignition/LICENSE`)
+
+The `ignition/` directory is an unmodified copy of this project (minus its CI
+workflows and personal Claude settings), included so the whole MCP toolset
+lives in one repo. It remains under GPL-3.0. The rest of this repository is
+not derived from it.
