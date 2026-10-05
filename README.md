@@ -39,6 +39,94 @@ with the files it creates.
 you want to wire it up by hand instead, or just point Claude Desktop/Claude Code at the files
 `setup.py` already generated.
 
+## 🧭 Start here: setting this up with Claude Code
+
+You can hand this whole section to Claude Code ("clone this repo and follow the Start here section of the README"). It can run the commands below. The items marked **You** need a person at the machine.
+
+### What you need first (**You**)
+
+| Server | Requires |
+|---|---|
+| Studio 5000 (`studio5000-ai-assistant`) | Windows, Python **3.12** (not 3.11), Studio 5000 Logix Designer, Logix Designer SDK |
+| AutoCAD (`autocad`) | Windows, AutoCAD installed **and running**, Python 3.10+ |
+| Ignition (`ignition-mcp`) | Python 3.10+, [`uv`](https://docs.astral.sh/uv/), Ignition Gateway 8.3+ with REST API enabled, an API key (or basic-auth login) |
+| Emulate3D (`emulate3d`) | Emulate3D running with its MCP server enabled |
+
+You only need the rows for the tools you actually use.
+
+### 1. Clone
+
+```bash
+git clone https://github.com/ProJewks/THE_Controls_AI_Assistants.git
+cd THE_Controls_AI_Assistants
+```
+
+### 2. Studio 5000
+
+```bash
+python setup.py
+```
+
+Installs dependencies, detects your Studio 5000 version (default v35), writes `.mcp.json`, and runs a self-test. Use `--version 36` etc. for other versions. Restart Claude Code in this folder afterwards so it picks up `.mcp.json`.
+
+### 3. AutoCAD
+
+```powershell
+cd autocad
+python -m venv .venv
+.venv\Scripts\pip install -e .
+```
+
+Then add this to the `mcpServers` section of `.mcp.json` (use the real absolute path):
+
+```json
+"autocad": {
+  "type": "stdio",
+  "command": "C:\\path\\to\\THE_Controls_AI_Assistants\\autocad\\.venv\\Scripts\\python.exe",
+  "args": ["-m", "autocad_mcp.server"]
+}
+```
+
+Start AutoCAD before using it; `autocad_status` is a quick connection check.
+
+### 4. Ignition
+
+```bash
+cd ignition
+uv sync
+cp .env.example .env     # then edit .env (**You**: gateway URL + API key; never commit .env)
+uv run python mcp_server.py        # serves http://localhost:8000/mcp (port from your .env)
+```
+
+Then register it:
+
+```json
+"ignition-mcp": { "type": "streamable-http", "url": "http://localhost:8000/mcp" }
+```
+
+Notes:
+- Tag values, tag config, alarms, history and script execution need **WebDev scripts deployed on the gateway** (**You**) — see `ignition/docs/webdev-setup.md`. Without them only the config/REST tools work.
+- `run_gateway_script` is off by default; enable it only deliberately with `IGNITION_MCP_ENABLE_SCRIPT_EXECUTION=true`.
+- Port: the steps above use `8000`, which is what `.env.example` sets. If you run without a `.env` (or delete that line), the server's built-in default is `8007` instead. Whatever `IGNITION_MCP_SERVER_PORT` is in your `.env` is the port to use in the URL.
+
+### 5. Emulate3D
+
+No code to install. In Emulate3D, enable the MCP server (default `http://localhost:9080/mcp`), then:
+
+```bash
+claude mcp add --transport http emulate3d http://localhost:9080/mcp
+```
+
+Have Claude call `get_capabilities` first in each session.
+
+### 6. Verify
+
+Restart Claude Code in the repo folder and run `/mcp`. Each server you set up should show as connected. If one doesn't, see `TEAM_TROUBLESHOOTING_GUIDE.md`.
+
+### What you won't get from the repo
+
+Per-client project data (indexed vector databases, `Assets/`, reuse libraries, your own `CLAUDE.md`). To build a per-client project, follow `PLC_COPILOT_PROJECT_TEMPLATE.md`.
+
 ## 🔀 **Choosing your Studio 5000 version**
 
 This fork defaults to **v35**, but you're not locked into it. `setup.py` scans your machine for
