@@ -95,19 +95,19 @@ Start AutoCAD before using it; `autocad_status` is a quick connection check.
 cd ignition
 uv sync
 cp .env.example .env     # then edit .env (**You**: gateway URL + API key; never commit .env)
-uv run python mcp_server.py        # serves http://localhost:8007/mcp
+uv run python mcp_server.py        # serves http://localhost:8000/mcp (port from your .env)
 ```
 
 Then register it:
 
 ```json
-"ignition-mcp": { "type": "streamable-http", "url": "http://localhost:8007/mcp" }
+"ignition-mcp": { "type": "streamable-http", "url": "http://localhost:8000/mcp" }
 ```
 
 Notes:
 - Tag values, tag config, alarms, history and script execution need **WebDev scripts deployed on the gateway** (**You**) — see `ignition/docs/webdev-setup.md`. Without them only the config/REST tools work.
 - `run_gateway_script` is off by default; enable it only deliberately with `IGNITION_MCP_ENABLE_SCRIPT_EXECUTION=true`.
-- Check the port: the README says `8007`, but `.env.example` sets `IGNITION_MCP_SERVER_PORT=8000`. Make the URL above match whatever port is in your `.env`.
+- Port: the steps above use `8000`, which is what `.env.example` sets. If you run without a `.env` (or delete that line), the server's built-in default is `8007` instead. Whatever `IGNITION_MCP_SERVER_PORT` is in your `.env` is the port to use in the URL.
 
 ### 5. Emulate3D
 
