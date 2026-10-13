@@ -123,9 +123,45 @@ Have Claude call `get_capabilities` first in each session.
 
 Restart Claude Code in the repo folder and run `/mcp`. Each server you set up should show as connected. If one doesn't, see `TEAM_TROUBLESHOOTING_GUIDE.md`.
 
+### 7. The 99 Test Library (shared agents and knowledge base)
+
+The MCP servers above are only the tools. The team also has a shared, guarded controls library with its own Claude Code agents and skills. Everyone on the team has access to the folder on the Teams share:
+
+```
+C:\Users\<you>\tophatengineering.com\Engineering - Documents\1. Controls Engineering\99 Test Library
+```
+
+(The path starts wherever your sync puts `tophatengineering.com`; sync the **Engineering - Documents** library if you don't see it.)
+
+What's in it:
+
+| Path | What it is |
+|---|---|
+| `Library/V37`, `Library/V35` | Reusable AOIs, routines and UDTs (V37 preferred) |
+| `Library/registry`, `Library/notes` | Generated registry plus reviewed notes per block. Check these first for "what should I reuse / what does this block do" |
+| `Library/conventions.md` | The team's standing PLC rules (V36+ mnemonics, ST rules, naming, description limits). Binding for generated logic |
+| `Library/tag_map.md`, `Library/devices.yaml`, `Library/cad_blocks.yaml` | Tag map, IO device catalog, Daifuku CAD block catalog |
+| `Projects/<project>/` | Per-project docs, zone counts, logic exports, `Generated/` output and change logs |
+| `Handoffs/` | Shared mailbox for passing tasks between Claude sessions (see its `README.md`) |
+
+Agents and skills (in `.claude/` inside that folder):
+
+| Name | Kind | Use it for |
+|---|---|---|
+| `lib-researcher` | agent | Read-only research across the library and projects (broad sweeps that would need dozens of file reads) |
+| `logic-author` | agent | Writes new or changed Logix logic as importable L5X into `Projects/<project>/Generated/`, validated, with an import checklist. Never touches an ACD |
+| `new-logic-workflow` | skill | Procedure for creating or changing logic: model choice, validation, change log, Studio 5000 import hand-off |
+| `refresh-registry` | skill | Rebuild the registry after a new Studio 5000 export |
+| `write-changelog` | skill | Write a change-log entry for what changed |
+
+How to use it:
+- **Looking things up:** from any session, point Claude at the folder and have it read `Library/registry`, `Library/notes`, `Library/tag_map.md` and `Library/devices.yaml`. Read-only is fine from anywhere.
+- **Authoring new logic:** open Claude Code **in the `99 Test Library` folder itself**. The agents, skills, permissions and path guard only apply there. Don't write into the library from another folder.
+- **Hand-off:** copy a fresh Studio 5000 export into `Projects/<project>/Logic/` and run `refresh-registry`. Import anything generated in `Projects/*/Generated/` into Studio 5000 yourself. Nothing is in the project until you import it.
+
 ### What you won't get from the repo
 
-Per-client project data (indexed vector databases, `Assets/`, reuse libraries, your own `CLAUDE.md`). To build a per-client project, follow `PLC_COPILOT_PROJECT_TEMPLATE.md`.
+Per-client project data (indexed vector databases, `Assets/`, your own `CLAUDE.md`). Reusable AOIs, routines, UDTs and project docs live in the 99 Test Library (step 7), not in this repo. To build a per-client project, follow `PLC_COPILOT_PROJECT_TEMPLATE.md`.
 
 ## 🔀 **Choosing your Studio 5000 version**
 
