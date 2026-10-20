@@ -49,8 +49,8 @@ class InstructionVectorDatabase:
     """Vector database for Studio 5000 instruction documentation"""
     
     def __init__(self, cache_dir: str = "instruction_vector_cache"):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
+        from cache_paths import resolve_cache_dir
+        self.cache_dir = resolve_cache_dir(cache_dir)
         
         # Initialize sentence transformer for embeddings
         self.model = None

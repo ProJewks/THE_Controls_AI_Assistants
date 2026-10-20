@@ -67,8 +67,8 @@ class PDFVectorDatabase:
     """Vector database for PDF technical drawings with intelligent search"""
     
     def __init__(self, cache_dir: str = "pdf_drawings_cache"):
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
+        from cache_paths import resolve_cache_dir
+        self.cache_dir = resolve_cache_dir(cache_dir)
         
         # Initialize sentence transformer for embeddings (same as other DBs)
         self.model = None
