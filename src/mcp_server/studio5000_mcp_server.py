@@ -15,7 +15,7 @@ import re
 import sys
 import threading
 import importlib.util
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
@@ -382,6 +382,7 @@ class Studio5000Parser:
             return cached_instructions
 
         name_pattern = re.compile(r'\(([A-Z][A-Z0-9_]{1,15})\)\s*$')
+        mnemonic_in_title = re.compile(r'\(([A-Z][A-Z0-9_]{1,15})\)')
         instructions: Dict[str, Instruction] = {}
         categories: Dict[str, List[str]] = {}
 
@@ -397,27 +398,43 @@ class Studio5000Parser:
                 continue
             title = html_lib.unescape(re.sub(r'<[^>]+>', '', title_match.group(1))).strip()
 
+            # (name, description) pairs this page documents. Most pages cover one
+            # instruction and end in "(MNEMONIC)"; some cover several, e.g.
+            # "Jump to Subroutine (JSR), Subroutine (SBR), and Return (RET)" or
+            # "Get System Value (GSV) and Set System Value (SSV)", so every
+            # "(MNEMONIC)" in the title is indexed, not just the trailing one.
+            entries: List[Tuple[str, str]] = []
             name_match = name_pattern.search(title)
-            if not name_match:
+            if name_match:
+                entries.append((name_match.group(1).upper(), title[:name_match.start()].strip(' -–—')))
+
+            segment_start = 0
+            for mnemonic_match in mnemonic_in_title.finditer(title):
+                mnemonic = mnemonic_match.group(1).upper()
+                if not any(mnemonic == existing for existing, _ in entries):
+                    segment = title[segment_start:mnemonic_match.start()]
+                    segment = re.sub(r'^[\s,/\-–—]*(and\s+)?', '', segment).strip(' -–—')
+                    entries.append((mnemonic, segment))
+                segment_start = mnemonic_match.end()
+
+            if not entries:
                 # Not an instruction topic page (e.g. a dialog-box help page) - skip it
                 continue
 
-            name = name_match.group(1).upper()
-            description = title[:name_match.start()].strip(' -–—')
             category = html_file.parent.name
-
-            categories.setdefault(category, []).append(name)
-            # A handful of instructions have more than one topic page (overloads,
-            # split parts) - keep the first one found, consistent with the legacy
-            # parser's "first write wins" behavior for duplicate names.
-            if name not in instructions:
-                instructions[name] = Instruction(
-                    name=name,
-                    category=category,
-                    description=description,
-                    file_path=str(html_file.relative_to(self.doc_root)),
-                    languages=[],
-                )
+            for name, description in entries:
+                categories.setdefault(category, []).append(name)
+                # A handful of instructions have more than one topic page (overloads,
+                # split parts) - keep the first one found, consistent with the legacy
+                # parser's "first write wins" behavior for duplicate names.
+                if name not in instructions:
+                    instructions[name] = Instruction(
+                        name=name,
+                        category=category,
+                        description=description,
+                        file_path=str(html_file.relative_to(self.doc_root)),
+                        languages=[],
+                    )
 
         self.categories = categories
         self.instructions = instructions
