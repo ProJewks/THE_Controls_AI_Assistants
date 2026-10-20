@@ -42,6 +42,11 @@ you find reusable blocks worth pulling out of `Assets/` for the current job. Kee
 untouched; open and close them in Studio 5000 without saving, and only export the pieces you want
 as standalone L5X into the numbered folders above.
 
+A ready-to-copy skeleton of this layout, extended with `04 Controller Tags/`, `05 Programs/`,
+`06 Emulate3D/`, `07 Compare/`, `Planning/` and `_Archive/` as used on THD_LG_CP2, is in
+[templates/PLC_Copilot_Workspace/](templates/PLC_Copilot_Workspace/README.md), with a fill-in
+`CLAUDE.template.md`.
+
 ## `Logix_Index.md`
 
 This is the "what's in the reuse library and why" file. For each AOI/Routine/UDT pulled into
