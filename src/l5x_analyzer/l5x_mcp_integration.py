@@ -165,11 +165,16 @@ class L5XSDKMCPIntegration:
                     'message': f'Successfully indexed {project_name}'
                 }
             else:
-                return {
+                failure = {
                     'success': False,
                     'error': 'Failed to index project - check logs for details'
                 }
-                
+                sdk_analyzer = getattr(self.vector_db, 'sdk_analyzer', None)
+                if sdk_analyzer is not None and sdk_analyzer.last_error:
+                    failure['error'] = f'Failed to open project via the SDK: {sdk_analyzer.last_error}'
+                    failure['hint'] = sdk_analyzer.last_hint
+                return failure
+
         except Exception as e:
             logger.error(f"Error indexing project {acd_path}: {e}")
             return {

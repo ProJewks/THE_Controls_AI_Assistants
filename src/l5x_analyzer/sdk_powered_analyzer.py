@@ -27,9 +27,34 @@ except ImportError as e:
     LogixProject = None
     _LOGIX_PROJECT_IMPORT_ERROR = e
 
+SERVICE_RESTART_HINT = (
+    "The Logix Designer SDK service (LdSdkService) is not answering. This is the known 'service is "
+    "hung' state: the port accepts the connection and then drops it, so every open/export fails with "
+    "'Unavailable' / 'HTTP/2 handshake did not complete'. Restarting the service fixes it. Do not "
+    "investigate versions, ports or the Python package first. Try `Restart-Service LdSdkService`; "
+    "that needs an elevated (administrator) PowerShell, so if it reports 'Cannot open LdSdkService "
+    "service' / access denied, ask the user to run `Restart-Service LdSdkService` in an admin "
+    "PowerShell and then retry. Only look for another cause if the failure continues after a restart."
+)
+
+
+def is_sdk_service_unavailable(error_text: str) -> bool:
+    """True when the SDK error means LdSdkService itself isn't answering (as opposed to a bad project file)."""
+    low = error_text.lower()
+    return any(marker in low for marker in (
+        "statuscode=\"unavailable\"",
+        "http/2 handshake",
+        "could not reach ldsdkservice",
+        "unable to complete connection to ldsdkservice",
+        "error starting grpc call",
+    ))
+
+
 def conversion_hint(error_text: str) -> str:
     """Plain-language next step for an SDK conversion failure (the raw SDK text is often cryptic)."""
     low = error_text.lower()
+    if is_sdk_service_unavailable(error_text):
+        return SERVICE_RESTART_HINT
     if "import_aborted" in low or "import was cancelled" in low:
         return ("The SDK could not import this L5X as a whole project (usually hardware/module profiles "
                 "or add-on definitions that aren't installed on this machine, or a revision mismatch). "
@@ -52,7 +77,10 @@ class SDKPoweredL5XAnalyzer:
         self.sdk_project = None
         self.project_path = None
         self.is_project_open = False
-        
+        # Set by open_project when it fails: the raw SDK error and the next step to take
+        self.last_error: Optional[str] = None
+        self.last_hint: Optional[str] = None
+
         # Temporary directory for L5X extractions
         self.temp_dir = Path(temp_dir) if temp_dir else Path(tempfile.gettempdir()) / "l5x_analyzer"
         self.temp_dir.mkdir(exist_ok=True)
@@ -101,6 +129,9 @@ class SDKPoweredL5XAnalyzer:
             return True
         except Exception as e:
             logger.error(f"Failed to open project {project_path}: {e}")
+            self.last_error = str(e)
+            self.last_hint = conversion_hint(self.last_error)
+            logger.error(self.last_hint)
             self.sdk_project = None
             self.project_path = None
             self.is_project_open = False

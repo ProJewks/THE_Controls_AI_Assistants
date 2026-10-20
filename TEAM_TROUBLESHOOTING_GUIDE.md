@@ -118,6 +118,22 @@ Ask AI: "Update this L5X file format from Studio 5000 v36 to v37 compatibility"
 
 ## 💻 **MCP Server Issues**
 
+### **SDK Opens/Exports Fail with "Unavailable" / "HTTP/2 handshake did not complete"**
+**Symptoms:** `export_acd_to_l5x`, `index_acd_project`, `open_acd_workspace` and other SDK tools fail with
+`StatusCode="Unavailable"`, `Error starting gRPC call`, or `server did not complete the HTTP/2 handshake`,
+even though `python -c "import logix_designer_sdk"` works and `LdSdkService` shows as Running.
+
+**Cause:** the Logix Designer SDK service (`LdSdkService`, port 53204) can get stuck. It still accepts
+the connection and then drops it. Versions, ports and the Python package are not the problem.
+
+**Fix:** restart the service from an **administrator** PowerShell, then retry:
+```powershell
+Restart-Service LdSdkService
+```
+A normal (non-admin) shell fails with "Cannot open LdSdkService service". Only look for another
+cause if the error continues after a restart. The server returns this advice itself in the `hint` of
+the failed SDK call.
+
 ### **AI Doesn't Respond/Server Not Working**
 **Symptoms:** AI requests hang, no response from MCP tools  
 
