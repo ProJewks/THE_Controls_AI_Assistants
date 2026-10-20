@@ -29,7 +29,8 @@ The live `.ACD` is very likely open in Studio 5000, which locks it exclusively.
   `GRT`, `LEQ`, `LES`, `NEQ`, `EQU`, `MOV` and `LIM` break the import.
 - The MCP server loads the help for several versions side by side (`STUDIO5000_DOC_PATHS`). The first
   version is the default and later ones are the fallback when the default has no entry. If none of
-  them has the instruction, look it up in Rockwell's online help and say that is where it came from.
+  them has the instruction, or a version's help isn't installed on this machine, look it up in
+  Rockwell's online help instead of failing or guessing, and say that is where it came from.
 
 ## Working style
 - Cite the specific rung, routine, tag, or L5X file behind every explanation.
